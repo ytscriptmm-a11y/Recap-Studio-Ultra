@@ -964,16 +964,21 @@ else:
             tone = st.selectbox("🎨 အရေးအသားပုံစံ", list(get_tones().keys()))
             
             # Model selection based on API type
-            if is_own_api():
-                model = st.selectbox("🤖 Model", [
-                    "models/gemini-2.5-flash",
-                    "models/gemini-2.5-pro", 
-                    "gemini-2.0-flash-exp",
-                    "gemini-1.5-flash"
-                ])
-            else:
-                model = st.selectbox("🤖 Model", ["models/gemini-2.5-flash"])
-                st.caption("⚠️ App API သုံးရင် Flash model သာ ရွေးလို့ရပါတယ်။ Pro models သုံးချင်ရင် Own API ထည့်ပါ။")
+            # App API = All models
+# Own API = User ရွေးလို့ရ + Free Tier warning
+
+all_models = [
+    "models/gemini-2.5-flash",
+    "models/gemini-2.5-pro", 
+    "gemini-2.0-flash-exp",
+    "gemini-1.5-flash"
+]
+
+model = st.selectbox("🤖 Model", all_models)
+
+# Own API + Pro model selected = show warning
+if is_own_api() and "pro" in model.lower():
+    st.warning("⚠️ Pro model ကို Free Tier API နဲ့ သုံးရင် Rate Limit Error ရနိုင်ပါတယ်။ Billing Enabled API key သုံးပါ။")
             
             with st.expander("🎯 စိတ်ကြိုက် ညွှန်ကြားချက်"):
                 custom = st.text_area("", placeholder="ဥပမာ: Emoji တွေထည့်ပေး၊ ရယ်စရာထည့်ပေး...", height=80)
@@ -1074,11 +1079,21 @@ else:
             with col1:
                 target = st.selectbox("🎯 ဘာသာပြန်မည့်ဘာသာ", list(languages.keys()))
             with col2:
-                if is_own_api():
-                    trans_model = st.selectbox("Model", ["models/gemini-2.5-flash", "models/gemini-2.5-pro"], key="tm")
-                else:
-                    trans_model = "models/gemini-2.5-flash"
-                    st.caption("Flash model")
+                # App API = All models
+# Own API = User ရွေးလို့ရ + Free Tier warning
+
+all_models = [
+    "models/gemini-2.5-flash",
+    "models/gemini-2.5-pro", 
+    "gemini-2.0-flash-exp",
+    "gemini-1.5-flash"
+]
+
+model = st.selectbox("🤖 Model", all_models)
+
+# Own API + Pro model selected = show warning
+if is_own_api() and "pro" in model.lower():
+    st.warning("⚠️ Pro model ကို Free Tier API နဲ့ သုံးရင် Rate Limit Error ရနိုင်ပါတယ်။ Billing Enabled API key သုံးပါ။")
             
             input_type = st.radio(
                 "Input နည်းလမ်း",
@@ -1378,14 +1393,21 @@ else:
             template = st.selectbox("📋 Template", list(templates.keys()))
             
             # Model selection
-            if is_own_api():
-                thumb_model = st.selectbox("🤖 Model", [
-                    "gemini-2.0-flash-exp",
-                    "models/gemini-3-pro-image-preview"
-                ])
-            else:
-                thumb_model = "gemini-2.0-flash-exp"
-                st.caption("⚠️ App API သုံးရင် Flash model သာ ရွေးလို့ရပါတယ်။")
+            # App API = All models
+# Own API = User ရွေးလို့ရ + Free Tier warning
+
+all_models = [
+    "models/gemini-2.5-flash",
+    "models/gemini-2.5-pro", 
+    "gemini-2.0-flash-exp",
+    "gemini-1.5-flash"
+]
+
+model = st.selectbox("🤖 Model", all_models)
+
+# Own API + Pro model selected = show warning
+if is_own_api() and "pro" in model.lower():
+    st.warning("⚠️ Pro model ကို Free Tier API နဲ့ သုံးရင် Rate Limit Error ရနိုင်ပါတယ်။ Billing Enabled API key သုံးပါ။")
             
             # Size
             sizes = {
@@ -1497,7 +1519,7 @@ else:
                             img['data'],
                             f"thumbnail_{img['idx']}.png",
                             mime=img.get('mime', 'image/png'),
-                            key=f"dl_{i}_{time.time()}",
+                            key=f"dl_thumb_{i}_{img['idx']}_{int(time.time()*1000)}",
                             use_container_width=True
                         )
     
