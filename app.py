@@ -965,23 +965,23 @@ else:
             
             # Model selection based on API type
             # App API = All models
-# Own API = User ရွေးလို့ရ + Free Tier warning
+            # Own API = User ရွေးလို့ရ + Free Tier warning
 
-all_models = [
-    "models/gemini-2.5-flash",
-    "models/gemini-2.5-pro", 
-    "gemini-2.0-flash-exp",
-    "gemini-1.5-flash"
-]
+            all_models = [
+                "models/gemini-2.5-flash",
+                "models/gemini-2.5-pro",
+                "gemini-2.0-flash-exp",
+                "gemini-1.5-flash"
+            ]
 
-model = st.selectbox("🤖 Model", all_models)
+            model = st.selectbox("🤖 Model", all_models)
 
-# Own API + Pro model selected = show warning
-if is_own_api() and "pro" in model.lower():
-    st.warning("⚠️ Pro model ကို Free Tier API နဲ့ သုံးရင် Rate Limit Error ရနိုင်ပါတယ်။ Billing Enabled API key သုံးပါ။")
-            
+            # Own API + Pro model selected = show warning
+            if is_own_api() and "pro" in model.lower():
+                st.warning("⚠️ Pro model ကို Free Tier API နဲ့ သုံးရင် Rate Limit Error ရနိုင်ပါတယ်။ Billing Enabled API key သုံးပါ။")
+
             with st.expander("🎯 စိတ်ကြိုက် ညွှန်ကြားချက်"):
-                custom = st.text_area("", placeholder="ဥပမာ: Emoji တွေထည့်ပေး၊ ရယ်စရာထည့်ပေး...", height=80)
+                custom = st.text_area("", placeholder="ဥပမာ: Emoji တွေထည့်ပေး...", height=80)
             
             if st.button("✨ Generate", use_container_width=True, type="primary", disabled=(not can_use and st.session_state['api_type'] == 'app')):
                 api_key = get_active_api_key()
@@ -1519,7 +1519,7 @@ if is_own_api() and "pro" in model.lower():
                             img['data'],
                             f"thumbnail_{img['idx']}.png",
                             mime=img.get('mime', 'image/png'),
-                            key=f"dl_thumb_{i}_{img['idx']}_{int(time.time()*1000)}",
+                            key=f"thumb_dl_{img['idx']}",
                             use_container_width=True
                         )
     
