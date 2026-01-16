@@ -1,1592 +1,1715 @@
 import streamlit as st
 import google.generativeai as genai
-import streamlit.components.v1 as components
 import time
 import os
 import tempfile
 import gc
 import io
+import hashlib
+import asyncio
+import struct
+import re
+import yt_dlp
 from PIL import Image
-import requests
-import subprocess
-import sys
 
-# --- LIBRARY IMPORTS WITH GRACEFUL FALLBACK ---
-PDF_AVAILABLE = True
-DOCX_AVAILABLE = True
-GDOWN_AVAILABLE = True
+# --- LIBRARY IMPORTS ---
+PDF_AVAILABLE, DOCX_AVAILABLE, GDOWN_AVAILABLE, SUPABASE_AVAILABLE, EDGE_TTS_AVAILABLE, GENAI_NEW_AVAILABLE = True, True, True, True, True, True
 
-try:
-    import PyPDF2
-except ImportError:
-    PDF_AVAILABLE = False
+try: import PyPDF2
+except: PDF_AVAILABLE = False
+try: from docx import Document
+except: DOCX_AVAILABLE = False
+try: import gdown
+except: GDOWN_AVAILABLE = False
+try: from supabase import create_client
+except: SUPABASE_AVAILABLE = False
+try: import edge_tts
+except: EDGE_TTS_AVAILABLE = False
+try: from google import genai as genai_new; from google.genai import types
+except: GENAI_NEW_AVAILABLE = False
 
-try:
-    from docx import Document
-except ImportError:
-    DOCX_AVAILABLE = False
+SUPABASE_URL = "https://ohjvgupjocgsirhwuobf.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9oanZndXBqb2Nnc2lyaHd1b2JmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU5MzkwMTgsImV4cCI6MjA4MTUxNTAxOH0.oZxQZ6oksjbmEeA_m8c44dG_z5hHLwtgoJssgK2aogI"
+supabase = None
+if SUPABASE_AVAILABLE:
+    try: supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    except: SUPABASE_AVAILABLE = False
 
-try:
-    import gdown
-except ImportError:
-    GDOWN_AVAILABLE = False
-
-# --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Ultimate AI Studio",
-    page_icon="✨",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+    page_title="AI Studio Pro", 
+    layout="centered", 
+    initial_sidebar_state="collapsed",
+    page_icon="🎬"
 )
 
-# --- SESSION STATE INITIALIZATION ---
-def init_session_state():
-    """Initialize all session state variables at app start"""
-    defaults = {
-        'video_queue': [],
-        'processing_active': False,
-        'current_index': 0,
-        'run_translate': False,
-        'run_rewrite': False,
-        'style_text': "",
-        'api_configured': False,
-        'custom_prompt': "",
-        'generated_images': [],
-        'ai_news_cache': None,
-        'ai_news_timestamp': None
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-init_session_state()
-
-# --- MATRIX RAIN BACKGROUND CSS ---
+# === MODERN GLASSMORPHISM UI ===
 st.markdown("""
 <style>
-    /* Import Google Font */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap');
-    
-    /* Matrix Rain Container */
-    .matrix-bg {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        z-index: -1;
-        overflow: hidden;
-        background: linear-gradient(180deg, #0a0a0f 0%, #0d1117 50%, #0a0f0a 100%);
-    }
-    
-    /* Matrix Rain Columns - CSS Only Animation */
-    .matrix-column {
-        position: absolute;
-        top: -100%;
-        font-family: 'Share Tech Mono', monospace;
-        font-size: 14px;
-        line-height: 1.2;
-        color: #0f0;
-        text-shadow: 0 0 8px #0f0, 0 0 20px #0f0;
-        animation: matrix-fall linear infinite;
-        opacity: 0.7;
-        white-space: nowrap;
-        writing-mode: vertical-rl;
-        text-orientation: upright;
-    }
-    
-    @keyframes matrix-fall {
-        0% { transform: translateY(-100%); opacity: 1; }
-        75% { opacity: 0.7; }
-        100% { transform: translateY(200vh); opacity: 0; }
-    }
-    
-    .matrix-column:nth-child(1) { left: 2%; animation-duration: 8s; animation-delay: 0s; font-size: 12px; }
-    .matrix-column:nth-child(2) { left: 6%; animation-duration: 12s; animation-delay: 1s; font-size: 10px; opacity: 0.5; }
-    .matrix-column:nth-child(3) { left: 10%; animation-duration: 9s; animation-delay: 2s; font-size: 14px; }
-    .matrix-column:nth-child(4) { left: 14%; animation-duration: 15s; animation-delay: 0.5s; font-size: 11px; opacity: 0.4; }
-    .matrix-column:nth-child(5) { left: 18%; animation-duration: 10s; animation-delay: 3s; font-size: 13px; }
-    .matrix-column:nth-child(6) { left: 22%; animation-duration: 11s; animation-delay: 1.5s; font-size: 10px; opacity: 0.6; }
-    .matrix-column:nth-child(7) { left: 26%; animation-duration: 14s; animation-delay: 2.5s; font-size: 12px; }
-    .matrix-column:nth-child(8) { left: 30%; animation-duration: 8s; animation-delay: 0.8s; font-size: 15px; opacity: 0.5; }
-    .matrix-column:nth-child(9) { left: 34%; animation-duration: 13s; animation-delay: 4s; font-size: 11px; }
-    .matrix-column:nth-child(10) { left: 38%; animation-duration: 9s; animation-delay: 1.2s; font-size: 13px; opacity: 0.4; }
-    .matrix-column:nth-child(11) { left: 42%; animation-duration: 16s; animation-delay: 3.5s; font-size: 10px; }
-    .matrix-column:nth-child(12) { left: 46%; animation-duration: 10s; animation-delay: 0.3s; font-size: 14px; opacity: 0.6; }
-    .matrix-column:nth-child(13) { left: 50%; animation-duration: 12s; animation-delay: 2.8s; font-size: 12px; }
-    .matrix-column:nth-child(14) { left: 54%; animation-duration: 8s; animation-delay: 1.8s; font-size: 11px; opacity: 0.5; }
-    .matrix-column:nth-child(15) { left: 58%; animation-duration: 14s; animation-delay: 4.5s; font-size: 13px; }
-    .matrix-column:nth-child(16) { left: 62%; animation-duration: 11s; animation-delay: 0.6s; font-size: 10px; opacity: 0.4; }
-    .matrix-column:nth-child(17) { left: 66%; animation-duration: 9s; animation-delay: 3.2s; font-size: 15px; }
-    .matrix-column:nth-child(18) { left: 70%; animation-duration: 15s; animation-delay: 2.2s; font-size: 12px; opacity: 0.6; }
-    .matrix-column:nth-child(19) { left: 74%; animation-duration: 10s; animation-delay: 1.4s; font-size: 11px; }
-    .matrix-column:nth-child(20) { left: 78%; animation-duration: 13s; animation-delay: 5s; font-size: 14px; opacity: 0.5; }
-    .matrix-column:nth-child(21) { left: 82%; animation-duration: 8s; animation-delay: 0.9s; font-size: 10px; }
-    .matrix-column:nth-child(22) { left: 86%; animation-duration: 12s; animation-delay: 3.8s; font-size: 13px; opacity: 0.4; }
-    .matrix-column:nth-child(23) { left: 90%; animation-duration: 11s; animation-delay: 2.6s; font-size: 12px; }
-    .matrix-column:nth-child(24) { left: 94%; animation-duration: 9s; animation-delay: 1.1s; font-size: 11px; opacity: 0.6; }
-    .matrix-column:nth-child(25) { left: 98%; animation-duration: 14s; animation-delay: 4.2s; font-size: 10px; }
-    
-    .stApp {
-        background: transparent !important;
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    }
-    
-    .stApp::before {
-        content: '';
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(10, 15, 20, 0.85);
-        z-index: -1;
-        pointer-events: none;
-    }
-    
-    header {visibility: hidden;}
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    
-    /* Main Container - Max Width 1800px */
-    .main .block-container {
-        max-width: 1800px !important;
-        padding: 2rem 2rem !important;
-    }
-    
-    div[data-testid="stVerticalBlockBorderWrapper"] > div {
-        background: linear-gradient(145deg, rgba(0, 40, 20, 0.85), rgba(10, 30, 15, 0.9)) !important;
-        backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border: 2px solid rgba(0, 255, 100, 0.25) !important;
-        border-radius: 16px !important;
-        box-shadow: 0 4px 24px rgba(0, 255, 100, 0.15), 0 0 0 1px rgba(0, 255, 100, 0.1), inset 0 1px 0 rgba(0, 255, 100, 0.1);
-        padding: 1.5rem;
-    }
-    
-    .stTextInput input, .stTextArea textarea {
-        background: rgba(0, 20, 10, 0.7) !important;
-        color: #00ff66 !important;
-        border: 2px solid rgba(0, 255, 100, 0.3) !important;
-        border-radius: 10px !important;
-        padding: 12px 16px !important;
-        font-size: 14px !important;
-        font-family: 'Share Tech Mono', monospace !important;
-        transition: all 0.3s ease;
-    }
-    
-    .stTextInput input:focus, .stTextArea textarea:focus {
-        border-color: rgba(0, 255, 100, 0.7) !important;
-        box-shadow: 0 0 0 3px rgba(0, 255, 100, 0.15), 0 0 20px rgba(0, 255, 100, 0.2) !important;
-    }
-    
-    .stTextInput input::placeholder, .stTextArea textarea::placeholder {
-        color: rgba(0, 255, 100, 0.4) !important;
-    }
-    
-    .stSelectbox div[data-baseweb="select"] > div {
-        background: rgba(0, 20, 10, 0.7) !important;
-        border: 2px solid rgba(0, 255, 100, 0.3) !important;
-        border-radius: 10px !important;
-        color: #00ff66 !important;
-    }
-    
-    .stSelectbox div[data-baseweb="select"] > div:hover {
-        border-color: rgba(0, 255, 100, 0.5) !important;
-    }
-    
-    .stButton > button {
-        background: linear-gradient(135deg, rgba(0, 200, 80, 0.9) 0%, rgba(0, 150, 60, 0.9) 100%);
-        color: #000 !important;
-        border: none;
-        border-radius: 10px;
-        padding: 0.75rem 1.5rem;
-        font-weight: 700;
-        font-size: 14px;
-        letter-spacing: 0.5px;
-        transition: all 0.3s ease;
-        box-shadow: 0 4px 15px rgba(0, 255, 100, 0.3), 0 0 30px rgba(0, 255, 100, 0.1);
-        text-transform: uppercase;
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 25px rgba(0, 255, 100, 0.5), 0 0 40px rgba(0, 255, 100, 0.2);
-        background: linear-gradient(135deg, rgba(0, 255, 100, 1) 0%, rgba(0, 200, 80, 1) 100%);
-    }
-    
-    .stDownloadButton > button {
-        background: linear-gradient(135deg, rgba(0, 180, 255, 0.9) 0%, rgba(0, 120, 200, 0.9) 100%) !important;
-        box-shadow: 0 4px 15px rgba(0, 180, 255, 0.3);
-        color: #000 !important;
-    }
-    
-    .stDownloadButton > button:hover {
-        box-shadow: 0 6px 25px rgba(0, 180, 255, 0.5);
-    }
-    
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background: rgba(0, 40, 20, 0.6);
-        padding: 8px;
-        border-radius: 12px;
-        border: 1px solid rgba(0, 255, 100, 0.2);
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        background: transparent;
-        border-radius: 8px;
-        color: rgba(0, 255, 100, 0.7);
-        border: 1px solid transparent;
-        padding: 10px 20px;
-        font-weight: 500;
-        transition: all 0.3s ease;
-    }
-    
-    .stTabs [data-baseweb="tab"]:hover {
-        color: rgba(0, 255, 100, 0.95);
-        background: rgba(0, 255, 100, 0.1);
-        border: 1px solid rgba(0, 255, 100, 0.3);
-    }
-    
-    .stTabs [aria-selected="true"] {
-        background: linear-gradient(135deg, rgba(0, 200, 80, 0.9) 0%, rgba(0, 150, 60, 0.9) 100%) !important;
-        color: #000 !important;
-        border: none !important;
-        box-shadow: 0 4px 15px rgba(0, 255, 100, 0.4), 0 0 20px rgba(0, 255, 100, 0.2);
-        font-weight: 700;
-    }
-    
-    [data-testid="stFileUploader"] {
-        background: rgba(0, 40, 20, 0.4);
-        border-radius: 12px;
-        padding: 16px;
-        border: 2px dashed rgba(0, 255, 100, 0.4) !important;
-        transition: all 0.3s ease;
-    }
-    
-    [data-testid="stFileUploader"]:hover {
-        border-color: rgba(0, 255, 100, 0.7) !important;
-        background: rgba(0, 255, 100, 0.05);
-        box-shadow: 0 0 30px rgba(0, 255, 100, 0.1);
-    }
-    
-    h1 {
-        color: #00ff66 !important;
-        font-weight: 700 !important;
-        font-size: 2rem !important;
-        letter-spacing: -0.5px;
-        text-shadow: 0 0 10px rgba(0, 255, 100, 0.5), 0 0 30px rgba(0, 255, 100, 0.3);
-    }
-    
-    h2, h3 {
-        color: #00ff66 !important;
-        font-weight: 600 !important;
-        text-shadow: 0 0 8px rgba(0, 255, 100, 0.3);
-    }
-    
-    p, label, .stMarkdown {
-        color: rgba(0, 255, 100, 0.85) !important;
-    }
-    
-    .queue-item {
-        background: rgba(0, 40, 20, 0.5);
-        border: 2px solid rgba(0, 255, 100, 0.2);
-        border-radius: 10px;
-        padding: 12px 16px;
-        margin: 8px 0;
-        transition: all 0.3s ease;
-        font-family: 'Share Tech Mono', monospace;
-    }
-    
-    .queue-item:hover {
-        background: rgba(0, 255, 100, 0.05);
-        border-color: rgba(0, 255, 100, 0.4);
-        box-shadow: 0 0 20px rgba(0, 255, 100, 0.1);
-    }
-    
-    .queue-item.processing {
-        background: rgba(0, 255, 100, 0.1);
-        border: 2px solid rgba(0, 255, 100, 0.5);
-        animation: pulse-glow 2s infinite;
-    }
-    
-    @keyframes pulse-glow {
-        0%, 100% { box-shadow: 0 0 5px rgba(0, 255, 100, 0.3); }
-        50% { box-shadow: 0 0 20px rgba(0, 255, 100, 0.6); }
-    }
-    
-    .queue-item.completed {
-        background: rgba(0, 180, 255, 0.1);
-        border: 2px solid rgba(0, 180, 255, 0.5);
-    }
-    
-    .queue-item.failed {
-        background: rgba(255, 50, 50, 0.1);
-        border: 2px solid rgba(255, 50, 50, 0.5);
-    }
-    
-    .stAlert { border-radius: 10px !important; }
-    
-    .stProgress > div > div {
-        background: linear-gradient(90deg, #00ff66, #00cc55, #00ff66) !important;
-        background-size: 200% 100%;
-        animation: progress-glow 2s linear infinite;
-        border-radius: 10px;
-        box-shadow: 0 0 10px rgba(0, 255, 100, 0.5);
-    }
-    
-    @keyframes progress-glow {
-        0% { background-position: 0% 50%; }
-        100% { background-position: 200% 50%; }
-    }
-    
-    .stRadio > div { gap: 12px; }
-    .stRadio label { color: rgba(0, 255, 100, 0.85) !important; }
-    
-    [data-testid="stMetricValue"] {
-        color: #00ff66 !important;
-        font-weight: 700 !important;
-        font-family: 'Share Tech Mono', monospace !important;
-        text-shadow: 0 0 10px rgba(0, 255, 100, 0.5);
-    }
-    
-    [data-testid="stMetricLabel"] { color: rgba(0, 255, 100, 0.6) !important; }
-    
-    .streamlit-expanderHeader {
-        background: rgba(0, 40, 20, 0.5) !important;
-        border-radius: 10px !important;
-        color: #00ff66 !important;
-    }
-    
-    .main-title { text-align: center; padding: 1rem 0 0.5rem 0; }
-    
-    .main-title h1 {
-        background: linear-gradient(135deg, #00ff66, #00ffaa, #00ff66);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        font-size: 2.8rem !important;
-        margin-bottom: 0.25rem;
-        animation: title-glow 3s ease-in-out infinite;
-        text-shadow: none;
-    }
-    
-    @keyframes title-glow {
-        0%, 100% { filter: drop-shadow(0 0 10px rgba(0, 255, 100, 0.5)); }
-        50% { filter: drop-shadow(0 0 20px rgba(0, 255, 100, 0.8)); }
-    }
-    
-    .main-title p {
-        color: rgba(0, 255, 100, 0.5) !important;
-        font-size: 1rem;
-        font-family: 'Share Tech Mono', monospace;
-        letter-spacing: 2px;
-    }
-    
-    hr {
-        border: none;
-        height: 1px;
-        background: linear-gradient(90deg, transparent, rgba(0, 255, 100, 0.3), transparent);
-        margin: 1.5rem 0;
-    }
-    
-    ::-webkit-scrollbar { width: 8px; height: 8px; }
-    ::-webkit-scrollbar-track { background: rgba(0, 20, 10, 0.5); border-radius: 10px; }
-    ::-webkit-scrollbar-thumb { background: rgba(0, 255, 100, 0.4); border-radius: 10px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(0, 255, 100, 0.6); }
-    
-    ::selection { background: rgba(0, 255, 100, 0.3); color: #00ff66; }
-    
-    /* News Card Styling */
-    .news-card {
-        background: rgba(0, 40, 20, 0.6);
-        border: 1px solid rgba(0, 255, 100, 0.2);
-        border-radius: 12px;
-        padding: 16px;
-        margin: 10px 0;
-        transition: all 0.3s ease;
-    }
-    
-    .news-card:hover {
-        border-color: rgba(0, 255, 100, 0.5);
-        box-shadow: 0 0 20px rgba(0, 255, 100, 0.1);
-    }
-    
-    .news-card h4 {
-        color: #00ff66 !important;
-        margin-bottom: 8px;
-    }
-    
-    .news-card p {
-        color: rgba(0, 255, 100, 0.7) !important;
-        font-size: 0.9rem;
-    }
-    
-    .news-card .source {
-        color: rgba(0, 180, 255, 0.8) !important;
-        font-size: 0.8rem;
-    }
-</style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Myanmar:wght@300;400;500;600;700&family=Poppins:wght@300;400;500;600;700&display=swap');
 
-<!-- Matrix Rain Background HTML -->
-<div class="matrix-bg">
-    <div class="matrix-column">ア イ ウ エ オ カ キ ク ケ コ 0 1 0 1 サ シ ス セ ソ</div>
-    <div class="matrix-column">1 0 1 タ チ ツ テ ト ナ ニ ヌ ネ ノ 0 1 0 ハ ヒ フ</div>
-    <div class="matrix-column">マ ミ ム メ モ 0 1 1 0 ヤ ユ ヨ ラ リ ル レ ロ ワ</div>
-    <div class="matrix-column">0 1 0 1 0 ア カ サ タ ナ ハ マ ヤ ラ ワ 1 0 1 0 1</div>
-    <div class="matrix-column">キ シ チ ニ ヒ ミ リ 0 1 0 ク ス ツ ヌ フ ム ル</div>
-    <div class="matrix-column">1 1 0 0 1 ケ セ テ ネ ヘ メ レ 0 0 1 1 0 コ ソ ト</div>
-    <div class="matrix-column">ノ ホ モ ヨ ロ 1 0 1 ア イ ウ エ オ 0 1 0 1 0 1</div>
-    <div class="matrix-column">0 カ キ ク 1 ケ コ 0 サ シ 1 ス セ 0 ソ タ 1 チ ツ</div>
-    <div class="matrix-column">テ ト 0 1 ナ ニ ヌ ネ ノ 1 0 ハ ヒ フ ヘ ホ 0 1 0</div>
-    <div class="matrix-column">1 マ ミ ム メ モ 0 ヤ ユ ヨ 1 ラ リ ル レ ロ 0 1 ワ</div>
-    <div class="matrix-column">ア 0 イ 1 ウ 0 エ 1 オ 0 カ 1 キ 0 ク 1 ケ 0 コ 1</div>
-    <div class="matrix-column">サ シ ス 0 1 0 セ ソ タ 1 0 1 チ ツ テ 0 1 0 ト ナ</div>
-    <div class="matrix-column">1 0 ニ ヌ ネ 1 0 ノ ハ ヒ 1 0 フ ヘ ホ 1 0 マ ミ ム</div>
-    <div class="matrix-column">メ モ 1 0 1 ヤ ユ ヨ 0 1 0 ラ リ ル 1 0 1 レ ロ ワ</div>
-    <div class="matrix-column">0 1 ア イ 0 1 ウ エ 0 1 オ カ 0 1 キ ク 0 1 ケ コ</div>
-    <div class="matrix-column">サ 0 シ 1 ス 0 セ 1 ソ 0 タ 1 チ 0 ツ 1 テ 0 ト 1</div>
-    <div class="matrix-column">1 1 0 0 1 1 0 0 ナ ニ ヌ ネ ノ ハ ヒ フ ヘ ホ 0 0</div>
-    <div class="matrix-column">マ ミ ム メ 0 1 モ ヤ ユ 1 0 ヨ ラ リ 0 1 ル レ ロ</div>
-    <div class="matrix-column">0 ワ 1 ア 0 イ 1 ウ 0 エ 1 オ 0 カ 1 キ 0 ク 1 ケ</div>
-    <div class="matrix-column">コ サ 0 1 0 シ ス セ 1 0 1 ソ タ チ 0 1 0 ツ テ ト</div>
-    <div class="matrix-column">1 0 1 0 1 ナ ニ ヌ ネ ノ 0 1 0 1 0 ハ ヒ フ ヘ ホ</div>
-    <div class="matrix-column">マ 1 ミ 0 ム 1 メ 0 モ 1 ヤ 0 ユ 1 ヨ 0 ラ 1 リ 0</div>
-    <div class="matrix-column">ル レ ロ 0 0 1 1 ワ ア イ 1 1 0 0 ウ エ オ カ キ ク</div>
-    <div class="matrix-column">0 1 1 0 ケ コ サ シ 1 0 0 1 ス セ ソ タ 0 1 1 0</div>
-    <div class="matrix-column">チ ツ 0 テ ト 1 ナ ニ 0 ヌ ネ 1 ノ ハ 0 ヒ フ 1 ヘ ホ</div>
-</div>
+:root {
+    --primary: #6366f1;
+    --primary-light: #818cf8;
+    --primary-dark: #4f46e5;
+    --accent: #22d3ee;
+    --accent-pink: #f472b6;
+    --bg-dark: #0a0a1a;
+    --bg-card: rgba(15, 23, 42, 0.8);
+    --bg-glass: rgba(255, 255, 255, 0.05);
+    --text-primary: #f1f5f9;
+    --text-secondary: #94a3b8;
+    --border-glass: rgba(255, 255, 255, 0.1);
+    --success: #10b981;
+    --warning: #f59e0b;
+    --error: #ef4444;
+}
+
+* {
+    font-family: 'Poppins', 'Noto Sans Myanmar', sans-serif !important;
+}
+
+.stApp {
+    background: linear-gradient(135deg, var(--bg-dark) 0%, #0f172a 50%, #1e1b4b 100%) !important;
+    background-attachment: fixed !important;
+}
+
+/* Animated background */
+.stApp::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: 
+        radial-gradient(circle at 20% 80%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(34, 211, 238, 0.1) 0%, transparent 50%),
+        radial-gradient(circle at 40% 40%, rgba(244, 114, 182, 0.08) 0%, transparent 40%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+header, #MainMenu, footer, [data-testid="stDecoration"] {
+    visibility: hidden !important;
+    display: none !important;
+}
+
+/* Main container */
+[data-testid="block-container"] {
+    max-width: 100% !important;
+    padding: 1rem !important;
+    margin: 0 auto !important;
+}
+
+@media (min-width: 768px) {
+    [data-testid="block-container"] {
+        max-width: 900px !important;
+        padding: 2rem !important;
+    }
+}
+
+/* Glass card effect */
+.stContainer, [data-testid="stVerticalBlock"] > div[data-testid="element-container"] {
+    position: relative;
+    z-index: 1;
+}
+
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    background: var(--bg-glass) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
+    border: 1px solid var(--border-glass) !important;
+    border-radius: 20px !important;
+    box-shadow: 
+        0 8px 32px rgba(0, 0, 0, 0.3),
+        inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+    padding: 1.5rem !important;
+    margin-bottom: 1rem !important;
+}
+
+/* Inputs */
+.stTextInput > div > div > input,
+.stTextArea > div > div > textarea {
+    background: rgba(15, 23, 42, 0.6) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-glass) !important;
+    border-radius: 12px !important;
+    padding: 12px 16px !important;
+    font-size: 14px !important;
+    transition: all 0.3s ease !important;
+}
+
+.stTextInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus {
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2) !important;
+}
+
+/* Buttons */
+.stButton > button {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 12px !important;
+    padding: 12px 24px !important;
+    font-weight: 600 !important;
+    font-size: 14px !important;
+    letter-spacing: 0.5px !important;
+    transition: all 0.3s ease !important;
+    box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3) !important;
+}
+
+.stButton > button:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 6px 25px rgba(99, 102, 241, 0.4) !important;
+}
+
+.stButton > button:active {
+    transform: translateY(0) !important;
+}
+
+/* Download button */
+.stDownloadButton > button {
+    background: linear-gradient(135deg, var(--success) 0%, #059669 100%) !important;
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3) !important;
+}
+
+/* Tabs - Modern pill style */
+.stTabs [data-baseweb="tab-list"] {
+    background: var(--bg-glass) !important;
+    backdrop-filter: blur(10px) !important;
+    padding: 8px !important;
+    border-radius: 16px !important;
+    gap: 8px !important;
+    border: 1px solid var(--border-glass) !important;
+    flex-wrap: wrap !important;
+    justify-content: center !important;
+}
+
+.stTabs [data-baseweb="tab"] {
+    color: var(--text-secondary) !important;
+    background: transparent !important;
+    border-radius: 10px !important;
+    padding: 10px 16px !important;
+    font-weight: 500 !important;
+    font-size: 13px !important;
+    transition: all 0.3s ease !important;
+    white-space: nowrap !important;
+}
+
+@media (max-width: 600px) {
+    .stTabs [data-baseweb="tab"] {
+        padding: 8px 12px !important;
+        font-size: 12px !important;
+    }
+}
+
+.stTabs [aria-selected="true"] {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%) !important;
+    color: white !important;
+    box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3) !important;
+}
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+    color: var(--text-primary) !important;
+    font-weight: 600 !important;
+}
+
+h1 {
+    background: linear-gradient(135deg, var(--primary-light) 0%, var(--accent) 50%, var(--accent-pink) 100%) !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    background-clip: text !important;
+    font-size: 2rem !important;
+}
+
+@media (max-width: 600px) {
+    h1 { font-size: 1.5rem !important; }
+    h2 { font-size: 1.2rem !important; }
+}
+
+p, span, label, div[data-testid="stMarkdownContainer"] p {
+    color: var(--text-secondary) !important;
+}
+
+/* Select box */
+.stSelectbox > div > div {
+    background: rgba(15, 23, 42, 0.6) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-glass) !important;
+    border-radius: 12px !important;
+}
+
+[data-baseweb="select"] > div {
+    background: rgba(15, 23, 42, 0.6) !important;
+    border-color: var(--border-glass) !important;
+}
+
+/* File uploader */
+div[data-testid="stFileUploader"] section {
+    background: rgba(15, 23, 42, 0.4) !important;
+    border: 2px dashed var(--border-glass) !important;
+    border-radius: 16px !important;
+    padding: 2rem !important;
+    transition: all 0.3s ease !important;
+}
+
+div[data-testid="stFileUploader"] section:hover {
+    border-color: var(--primary) !important;
+    background: rgba(99, 102, 241, 0.05) !important;
+}
+
+/* Metrics */
+[data-testid="stMetricValue"] {
+    color: var(--accent) !important;
+    font-weight: 700 !important;
+}
+
+/* Divider */
+hr {
+    background: linear-gradient(90deg, transparent, var(--border-glass), transparent) !important;
+    height: 1px !important;
+    border: none !important;
+    margin: 1.5rem 0 !important;
+}
+
+/* Progress bar */
+.stProgress > div > div > div {
+    background: linear-gradient(90deg, var(--primary), var(--accent)) !important;
+    border-radius: 10px !important;
+}
+
+/* Expander */
+.streamlit-expanderHeader {
+    background: var(--bg-glass) !important;
+    border-radius: 12px !important;
+    color: var(--text-primary) !important;
+}
+
+/* Radio buttons */
+.stRadio > div {
+    gap: 1rem !important;
+}
+
+.stRadio > div > label {
+    background: var(--bg-glass) !important;
+    padding: 10px 16px !important;
+    border-radius: 10px !important;
+    border: 1px solid var(--border-glass) !important;
+    transition: all 0.3s ease !important;
+}
+
+.stRadio > div > label:hover {
+    border-color: var(--primary) !important;
+}
+
+/* Checkbox */
+.stCheckbox > label {
+    color: var(--text-secondary) !important;
+}
+
+/* Slider */
+.stSlider > div > div > div {
+    background: var(--primary) !important;
+}
+
+/* Info/Warning/Error boxes */
+.stAlert {
+    background: var(--bg-glass) !important;
+    border-radius: 12px !important;
+    border-left: 4px solid var(--primary) !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-dark);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--primary);
+    border-radius: 4px;
+}
+
+/* Custom title styling */
+.main-title {
+    text-align: center;
+    padding: 1rem 0;
+}
+
+.main-title h1 {
+    margin: 0;
+    font-size: 2.5rem !important;
+}
+
+.main-title p {
+    color: var(--text-secondary);
+    margin-top: 0.5rem;
+}
+
+/* Card hover effect */
+.hover-card {
+    transition: all 0.3s ease;
+}
+
+.hover-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 40px rgba(99, 102, 241, 0.2);
+}
+
+/* Animated gradient border */
+@keyframes gradient-shift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+.gradient-border {
+    background: linear-gradient(135deg, var(--primary), var(--accent), var(--accent-pink), var(--primary));
+    background-size: 300% 300%;
+    animation: gradient-shift 5s ease infinite;
+    padding: 2px;
+    border-radius: 20px;
+}
+
+/* Audio player */
+audio {
+    width: 100% !important;
+    border-radius: 12px !important;
+}
+
+/* Number input */
+.stNumberInput > div > div > input {
+    background: rgba(15, 23, 42, 0.6) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-glass) !important;
+    border-radius: 12px !important;
+}
+</style>
 """, unsafe_allow_html=True)
 
-# --- HELPER FUNCTIONS ---
+# === HELPER FUNCTIONS ===
+def parse_mime(m):
+    b, r = 16, 24000
+    for p in m.split(";"):
+        p = p.strip()
+        if p.lower().startswith("rate="):
+            r = int(p.split("=")[1])
+        elif p.startswith("audio/L"):
+            b = int(p.split("L")[1])
+    return b, r
 
-def force_memory_cleanup():
-    """Force garbage collection and memory cleanup"""
+def to_wav(d, m):
+    b, r = parse_mime(m)
+    h = struct.pack("<4sI4s4sIHHIIHH4sI", b"RIFF", 36+len(d), b"WAVE", b"fmt ", 16, 1, 1, r, r*b//8, b//8, b, b"data", len(d))
+    return h + d
+
+def get_hash(k): 
+    return hashlib.sha256(k.encode()).hexdigest()[:32]
+
+def cleanup(): 
     gc.collect()
-    # Clear any large objects from session state that are no longer needed
-    if 'temp_data' in st.session_state:
-        del st.session_state['temp_data']
 
-def extract_file_id_from_url(url):
-    """Extract Google Drive file ID from various URL formats"""
+def get_text(r):
+    try:
+        if not r or not r.candidates:
+            return None, "No response"
+        parts = r.candidates[0].content.parts if hasattr(r.candidates[0], 'content') else []
+        t = "\n".join([p.text for p in parts if hasattr(p, 'text') and p.text])
+        return (t, None) if t else (None, "No text")
+    except Exception as e:
+        return None, str(e)
+
+def call_api(m, c, to=900):
+    for i in range(3):
+        try:
+            r = m.generate_content(c, request_options={"timeout": to})
+            t, e = get_text(r)
+            if t:
+                return r, None
+            if i < 2:
+                time.sleep(10)
+        except Exception as e:
+            if any(x in str(e).lower() for x in ['rate', 'quota', '429']):
+                if i < 2:
+                    time.sleep(10 * (2**i))
+                else:
+                    return None, "Rate limit - Please try again later"
+            else:
+                return None, str(e)
+    return None, "Max retries exceeded"
+
+def upload_gem(p, s=None):
+    try:
+        if s:
+            s.info(f"📤 Uploading ({os.path.getsize(p)/(1024*1024):.1f}MB)...")
+        f = genai.upload_file(p)
+        w = 0
+        while f.state.name == "PROCESSING":
+            w += 1
+            if s:
+                s.info(f"⏳ Processing...({w*2}s)")
+            time.sleep(2)
+            f = genai.get_file(f.name)
+            if w > 300:
+                return None
+        return f if f.state.name != "FAILED" else None
+    except Exception as e:
+        if s:
+            s.error(str(e))
+        return None
+
+def save_up(u):
+    try:
+        ext = u.name.split('.')[-1] if '.' in u.name else 'mp4'
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}")
+        u.seek(0, 2)
+        sz = u.tell()
+        u.seek(0)
+        prog = st.progress(0)
+        wr = 0
+        while ch := u.read(10*1024*1024):
+            tmp.write(ch)
+            wr += len(ch)
+            prog.progress(min(wr/sz, 1.0))
+        tmp.close()
+        prog.empty()
+        return tmp.name, None
+    except Exception as e:
+        return None, str(e)
+
+def rm_file(p):
+    if p and os.path.exists(p):
+        try:
+            os.remove(p)
+        except:
+            pass
+
+def read_file(u):
+    try:
+        t = u.type
+        if t == "text/plain":
+            return u.getvalue().decode("utf-8")
+        elif t == "application/pdf" and PDF_AVAILABLE:
+            return "\n".join([p.extract_text() or "" for p in PyPDF2.PdfReader(io.BytesIO(u.getvalue())).pages])
+        elif "wordprocessingml" in t and DOCX_AVAILABLE:
+            return "\n".join([p.text for p in Document(io.BytesIO(u.getvalue())).paragraphs])
+        return None
+    except:
+        return None
+
+def get_gid(url):
     try:
         if 'drive.google.com' in url:
             if '/file/d/' in url:
-                file_id = url.split('/file/d/')[1].split('/')[0].split('?')[0]
-                return file_id
+                return url.split('/file/d/')[1].split('/')[0].split('?')[0]
             elif 'id=' in url:
-                file_id = url.split('id=')[1].split('&')[0]
-                return file_id
+                return url.split('id=')[1].split('&')[0]
         return None
-    except Exception:
+    except:
         return None
 
-def download_video_from_url_gdown(url, progress_placeholder=None):
-    """Download video from Google Drive URL using gdown library"""
+def dl_gdrive(url, s=None):
     try:
-        file_id = extract_file_id_from_url(url)
-        if not file_id:
-            return None, "Invalid Google Drive URL format"
+        fid = get_gid(url)
+        if not fid:
+            return None, "Invalid URL"
+        if s:
+            s.info("📥 Downloading from Google Drive...")
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
+        if GDOWN_AVAILABLE and gdown.download(f"https://drive.google.com/uc?id={fid}", tmp, quiet=False, fuzzy=True):
+            if os.path.exists(tmp) and os.path.getsize(tmp) > 1000:
+                return tmp, None
+        return None, "Download failed"
+    except Exception as e:
+        return None, str(e)
+
+def download_video_url(url, status=None):
+    """Download from YouTube, Facebook, TikTok, Google Drive"""
+    try:
+        if status:
+            status.info("📥 Downloading video...")
         
-        if progress_placeholder:
-            progress_placeholder.info("📥 Downloading from Google Drive...")
+        try:
+            cookies_content = st.secrets["youtube"]["cookies"]
+            with open("/tmp/cookies.txt", "w") as f:
+                f.write(cookies_content)
+        except:
+            pass
         
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-        tmp_path = tmp_file.name
-        tmp_file.close()
+        if 'drive.google.com' in url:
+            path, err = dl_gdrive(url, status)
+            return path, err
         
-        gdrive_url = f"https://drive.google.com/uc?id={file_id}"
-        
-        if GDOWN_AVAILABLE:
-            output = gdown.download(gdrive_url, tmp_path, quiet=False, fuzzy=True)
-            if output is None:
-                return None, "gdown download failed. Check if file is shared publicly."
+        output_path = f"/tmp/video_{int(time.time())}.mp4"
+        ydl_opts = {
+            'format': 'best[ext=mp4]/best',
+            'outtmpl': output_path,
+            'quiet': True,
+            'no_warnings': True,
+            'socket_timeout': 60,
+            'cookiefile': '/tmp/cookies.txt' if os.path.exists('/tmp/cookies.txt') else None,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        if os.path.exists(output_path):
+            return output_path, None
         else:
-            try:
-                result = subprocess.run(
-                    [sys.executable, "-m", "gdown", gdrive_url, "-O", tmp_path, "--fuzzy"],
-                    capture_output=True,
-                    text=True,
-                    timeout=600
+            return None, "Download failed"
+    except Exception as e:
+        return None, str(e)
+
+def hash_pw(p):
+    return hashlib.sha256(p.encode()).hexdigest()
+
+def login(e, p):
+    if not supabase:
+        return None, "Database Error"
+    try:
+        r = supabase.table('users').select('*').eq('email', e).eq('password', hash_pw(p)).execute()
+        if r.data:
+            u = r.data[0]
+            return (u, "OK") if u['approved'] else (None, "Pending approval")
+        return None, "Invalid credentials"
+    except Exception as ex:
+        return None, str(ex)
+
+def register(e, p):
+    if not supabase:
+        return False, "Database Error"
+    try:
+        if supabase.table('users').select('email').eq('email', e).execute().data:
+            return False, "Email already exists"
+        supabase.table('users').insert({"email": e, "password": hash_pw(p), "approved": False, "is_admin": False}).execute()
+        return True, "Registered! Please wait for admin approval."
+    except Exception as ex:
+        return False, str(ex)
+
+def srt_to_text(srt_content):
+    lines = srt_content.split('\n')
+    text_lines = []
+    for line in lines:
+        line = line.strip()
+        if not line or line.isdigit() or '-->' in line:
+            continue
+        text_lines.append(line)
+    return '\n'.join(text_lines)
+
+def text_to_srt(text, sec_per_line=3):
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
+    srt_out = []
+    for i, line in enumerate(lines):
+        start = i * sec_per_line
+        end = (i + 1) * sec_per_line
+        sh, sm, ss = start // 3600, (start % 3600) // 60, start % 60
+        eh, em, es = end // 3600, (end % 3600) // 60, end % 60
+        srt_out.append(f"{i+1}")
+        srt_out.append(f"{sh:02d}:{sm:02d}:{ss:02d},000 --> {eh:02d}:{em:02d}:{es:02d},000")
+        srt_out.append(line)
+        srt_out.append("")
+    return '\n'.join(srt_out)
+
+# === TTS FUNCTIONS ===
+def edge_v():
+    return {
+        "🇲🇲 Myanmar-Thiha (Male)": "my-MM-ThihaNeural",
+        "🇲🇲 Myanmar-Nilar (Female)": "my-MM-NilarNeural",
+        "🇺🇸 English-Jenny (Female)": "en-US-JennyNeural",
+        "🇺🇸 English-Guy (Male)": "en-US-GuyNeural",
+        "🇹🇭 Thai (Female)": "th-TH-PremwadeeNeural",
+        "🇨🇳 Chinese (Female)": "zh-CN-XiaoxiaoNeural",
+        "🇯🇵 Japanese (Female)": "ja-JP-NanamiNeural",
+        "🇰🇷 Korean (Female)": "ko-KR-SunHiNeural"
+    }
+
+def gem_v():
+    return {
+        "Puck (Male)": "Puck",
+        "Charon (Male)": "Charon",
+        "Kore (Female)": "Kore",
+        "Fenrir (Male)": "Fenrir",
+        "Aoede (Female)": "Aoede",
+        "Leda (Female)": "Leda",
+        "Orus (Male)": "Orus",
+        "Zephyr (Male)": "Zephyr"
+    }
+
+def get_voice_styles():
+    return {
+        "🎬 Standard Storytelling": "Narrate in an engaging and expressive storytelling style, suitable for a movie recap.",
+        "🔥 Dramatic & Suspenseful": "A deep, dramatic, and suspenseful narration style. The voice should sound serious and intense.",
+        "😊 Casual & Friendly": "Speak in a casual, friendly, and energetic manner, like a YouTuber summarizing a movie to a friend.",
+        "🎃 Horror & Creepy": "Narrate in a chilling, eerie, and unsettling tone perfect for ghost stories and horror content.",
+        "🎭 Emotional & Dramatic": "Deliver the narration with deep emotional expression, as if performing a dramatic reading.",
+        "📺 News Anchor": "Speak in a professional, clear, and authoritative news anchor style.",
+        "🎓 Documentary": "Narrate in a calm, educational, and informative documentary style.",
+        "🎪 Custom": ""
+    }
+
+def gen_gem_styled(key, txt, v, mdl, style_prompt="", speed=1.0):
+    if not GENAI_NEW_AVAILABLE:
+        return None, "google-genai not installed"
+    try:
+        cl = genai_new.Client(api_key=key)
+        speed_instruction = ""
+        if speed < 1.0:
+            speed_instruction = f" Speak slowly at {speed}x speed."
+        elif speed > 1.0:
+            speed_instruction = f" Speak faster at {speed}x speed."
+        full_text = f"[Voice Style: {style_prompt}{speed_instruction}]\n\n{txt}" if style_prompt or speed_instruction else txt
+        cfg = types.GenerateContentConfig(
+            temperature=1,
+            response_modalities=["audio"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=v)
                 )
-                if result.returncode != 0:
-                    return None, f"Download failed: {result.stderr}"
-            except subprocess.TimeoutExpired:
-                return None, "Download timed out (10 minutes)"
-            except FileNotFoundError:
-                return None, "gdown not installed. Add 'gdown' to requirements.txt"
-        
-        if not os.path.exists(tmp_path):
-            return None, "Download failed - file not created"
-        
-        file_size = os.path.getsize(tmp_path)
-        if file_size < 1000:
-            with open(tmp_path, 'rb') as f:
-                content = f.read(500)
-                if b'<!DOCTYPE' in content or b'<html' in content:
-                    os.remove(tmp_path)
-                    return None, "Google Drive returned error page. Ensure file is shared as 'Anyone with the link'."
-            os.remove(tmp_path)
-            return None, "Downloaded file is too small - likely an error"
-        
-        if progress_placeholder:
-            size_mb = file_size / (1024 * 1024)
-            progress_placeholder.success(f"✅ Downloaded: {size_mb:.1f} MB")
-        
-        return tmp_path, None
-        
-    except Exception as e:
-        return None, f"Download error: {str(e)}"
-
-def download_video_from_url(url, progress_placeholder=None):
-    """Smart download using gdown"""
-    if GDOWN_AVAILABLE:
-        return download_video_from_url_gdown(url, progress_placeholder)
-    else:
-        return None, "gdown library not available. Please add 'gdown' to requirements.txt"
-
-def save_uploaded_file_chunked(uploaded_file, progress_placeholder=None):
-    """Save uploaded file in chunks"""
-    try:
-        file_ext = uploaded_file.name.split('.')[-1] if '.' in uploaded_file.name else 'mp4'
-        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}")
-        tmp_path = tmp_file.name
-        
-        uploaded_file.seek(0, 2)
-        file_size = uploaded_file.tell()
-        uploaded_file.seek(0)
-        
-        if progress_placeholder:
-            progress_placeholder.info(f"💾 Saving file ({file_size / (1024*1024):.1f} MB)...")
-        
-        chunk_size = 10 * 1024 * 1024
-        written = 0
-        
-        progress_bar = st.progress(0)
-        
-        while True:
-            chunk = uploaded_file.read(chunk_size)
-            if not chunk:
-                break
-            tmp_file.write(chunk)
-            written += len(chunk)
-            progress_bar.progress(min(written / file_size, 1.0))
-        
-        tmp_file.close()
-        progress_bar.empty()
-        
-        if progress_placeholder:
-            progress_placeholder.success(f"✅ File saved: {written / (1024*1024):.1f} MB")
-        
-        return tmp_path, None
-        
-    except Exception as e:
-        return None, f"Error saving file: {str(e)}"
-
-def upload_to_gemini(file_path, mime_type=None, progress_placeholder=None):
-    """Upload file to Gemini with status updates"""
-    try:
-        if progress_placeholder:
-            file_size = os.path.getsize(file_path)
-            size_mb = file_size / (1024 * 1024)
-            progress_placeholder.info(f"📤 Uploading to Gemini ({size_mb:.1f} MB)...")
-        
-        file = genai.upload_file(file_path, mime_type=mime_type)
-        
-        wait_count = 0
-        while file.state.name == "PROCESSING":
-            wait_count += 1
-            if progress_placeholder:
-                progress_placeholder.info(f"⏳ Gemini processing... ({wait_count * 2}s)")
-            time.sleep(2)
-            file = genai.get_file(file.name)
-            
-            if wait_count > 300:
-                return None
-        
-        if file.state.name == "FAILED":
-            return None
-        
-        if progress_placeholder:
-            progress_placeholder.success("✅ Upload complete!")
-        
-        return file
-    except Exception as e:
-        if progress_placeholder:
-            progress_placeholder.error(f"❌ Upload Error: {e}")
-        return None
-
-def read_file_content(uploaded_file):
-    """Reads content from txt, pdf, or docx files"""
-    try:
-        file_type = uploaded_file.type
-        
-        if file_type == "text/plain":
-            return uploaded_file.getvalue().decode("utf-8")
-        
-        elif file_type == "application/pdf":
-            if not PDF_AVAILABLE:
-                st.error("⚠️ PyPDF2 not installed.")
-                return None
-            reader = PyPDF2.PdfReader(io.BytesIO(uploaded_file.getvalue()))
-            text = ""
-            for page in reader.pages:
-                extracted = page.extract_text()
-                if extracted:
-                    text += extracted + "\n"
-            return text
-        
-        elif file_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-            if not DOCX_AVAILABLE:
-                st.error("⚠️ python-docx not installed.")
-                return None
-            doc = Document(io.BytesIO(uploaded_file.getvalue()))
-            text = "\n".join([para.text for para in doc.paragraphs])
-            return text
-        else:
-            st.warning(f"⚠️ Unsupported file type: {file_type}")
-            return None
-    except Exception as e:
-        st.error(f"Error reading file: {e}")
-        return None
-
-def cleanup_temp_file(file_path):
-    """Safely remove temporary file"""
-    if file_path and os.path.exists(file_path):
-        try:
-            os.remove(file_path)
-        except Exception:
-            pass
-
-def get_response_text_safe(response):
-    """Safely extract text from Gemini response with proper error handling"""
-    try:
-        # Check if response has candidates
-        if not response:
-            return None, "No response received from Gemini"
-        
-        if not response.candidates:
-            # Check for prompt feedback (content blocked)
-            if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
-                block_reason = getattr(response.prompt_feedback, 'block_reason', 'Unknown')
-                return None, f"Content blocked by Gemini: {block_reason}"
-            return None, "Empty response from Gemini (no candidates)"
-        
-        candidate = response.candidates[0]
-        
-        # Check finish reason
-        if hasattr(candidate, 'finish_reason'):
-            finish_reason = str(candidate.finish_reason)
-            if 'SAFETY' in finish_reason:
-                return None, "Content blocked due to safety filters"
-            if 'RECITATION' in finish_reason:
-                return None, "Content blocked due to recitation policy"
-        
-        # Check if content exists
-        if not hasattr(candidate, 'content') or not candidate.content:
-            return None, "Response has no content"
-        
-        # Check if parts exist
-        if not hasattr(candidate.content, 'parts') or not candidate.content.parts:
-            return None, "Response content has no parts"
-        
-        # Extract text from parts
-        text_parts = []
-        for part in candidate.content.parts:
-            if hasattr(part, 'text') and part.text:
-                text_parts.append(part.text)
-        
-        if not text_parts:
-            return None, "No text found in response parts"
-        
-        return "\n".join(text_parts), None
-        
-    except Exception as e:
-        return None, f"Error extracting response: {str(e)}"
-
-def call_gemini_api(model, content, timeout=600):
-    """Call Gemini API with retry logic and proper error handling"""
-    max_retries = 3
-    base_delay = 10  # Increased base delay for rate limiting
-    
-    for attempt in range(max_retries):
-        try:
-            response = model.generate_content(content, request_options={"timeout": timeout})
-            
-            # Use safe extraction
-            text, error = get_response_text_safe(response)
-            if error:
-                if attempt < max_retries - 1:
-                    st.warning(f"⚠️ {error}. Retrying...")
-                    time.sleep(base_delay)
-                    continue
-                return None, error
-            
-            return response, None
-            
-        except Exception as e:
-            error_str = str(e).lower()
-            
-            if 'rate' in error_str or 'quota' in error_str or '429' in error_str or 'resource' in error_str:
-                if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
-                    st.warning(f"⏳ Rate limited. Waiting {delay}s... (Attempt {attempt + 1}/{max_retries})")
-                    time.sleep(delay)
-                else:
-                    return None, f"Rate limit exceeded after {max_retries} retries. Please wait a few minutes."
-            else:
-                return None, str(e)
-    
-    return None, "Max retries exceeded"
-
-def process_video_from_path(file_path, video_name, vision_model_name, writer_model_name, style_text="", custom_prompt="", status_placeholder=None):
-    """Process video from local file path with proper error handling"""
-    gemini_file = None
-    try:
-        if status_placeholder:
-            status_placeholder.info("📤 Step 1/3: Uploading video to Gemini...")
-        
-        gemini_file = upload_to_gemini(file_path, progress_placeholder=status_placeholder)
-        if not gemini_file:
-            return None, "Failed to upload to Gemini"
-        
-        if status_placeholder:
-            status_placeholder.info("👀 Step 2/3: AI analyzing video...")
-        
-        vision_model = genai.GenerativeModel(vision_model_name)
-        vision_prompt = """
-        Watch this video carefully. 
-        Generate a highly detailed, chronological scene-by-scene description. (Use a storytelling tone.)
-        Include All the dialogue in the movie, visual details, emotions, and actions. (Use a storytelling tone.)
-        No creative writing yet, just facts.
-        """
-        
-        vision_response, error = call_gemini_api(vision_model, [gemini_file, vision_prompt], timeout=600)
-        if error:
-            return None, f"Vision analysis failed: {error}"
-        
-        video_description, error = get_response_text_safe(vision_response)
-        if error:
-            return None, f"Failed to get vision response: {error}"
-        
-        # Add delay between API calls to avoid rate limiting
-        time.sleep(5)
-        
-        if status_placeholder:
-            status_placeholder.info("✍️ Step 3/3: Writing Burmese recap script...")
-        
-        custom_instructions = ""
-        if custom_prompt:
-            custom_instructions = f"\n\n**CUSTOM INSTRUCTIONS:**\n{custom_prompt}\n"
-        
-        writer_model = genai.GenerativeModel(writer_model_name)
-        writer_prompt = f"""
-        You are a professional Burmese Movie Recap Scriptwriter.
-        Turn this description into an engaging **Burmese Movie Recap Script**.
-        
-        **INPUT DATA:**
-        {video_description}
-        
-        {style_text}
-        {custom_instructions}
-        
-        **INSTRUCTIONS:**
-        1. Write in 100% Burmese.
-        2. Use a storytelling tone.
-        3. Cover the whole story.
-        4. Do not summarize too much; keep details.
-        5. Scene-by-scene.(Use a storytelling tone.) 
-        6. Full narration.                         
-        """
-        
-        final_response, error = call_gemini_api(writer_model, writer_prompt, timeout=600)
-        if error:
-            return None, f"Script writing failed: {error}"
-        
-        final_text, error = get_response_text_safe(final_response)
-        if error:
-            return None, f"Failed to get script: {error}"
-        
-        return final_text, None
-        
+            )
+        )
+        aud = b""
+        mime = "audio/L16;rate=24000"
+        for ch in cl.models.generate_content_stream(
+            model=mdl,
+            contents=[types.Content(role="user", parts=[types.Part.from_text(text=full_text)])],
+            config=cfg
+        ):
+            if ch.candidates and ch.candidates[0].content and ch.candidates[0].content.parts:
+                p = ch.candidates[0].content.parts[0]
+                if hasattr(p, 'inline_data') and p.inline_data and p.inline_data.data:
+                    aud += p.inline_data.data
+                    mime = p.inline_data.mime_type
+        if not aud:
+            return None, "No audio generated"
+        out = tempfile.NamedTemporaryFile(delete=False, suffix=".wav").name
+        with open(out, "wb") as f:
+            f.write(to_wav(aud, mime))
+        return out, None
     except Exception as e:
         return None, str(e)
-    
-    finally:
-        if gemini_file:
-            try: 
-                genai.delete_file(gemini_file.name)
-            except Exception: 
-                pass
-        force_memory_cleanup()
 
-def process_video_from_url(url, video_name, vision_model_name, writer_model_name, style_text="", custom_prompt="", status_placeholder=None):
-    """Process video from URL with memory cleanup"""
-    tmp_path = None
+def gen_edge(txt, v, r=0):
+    if not EDGE_TTS_AVAILABLE:
+        return None, "Edge TTS not available"
     try:
-        if status_placeholder:
-            status_placeholder.info("📥 Downloading from Google Drive...")
-        
-        tmp_path, error = download_video_from_url(url, status_placeholder)
-        
-        if error or not tmp_path:
-            return None, error or "Download failed"
-        
-        if status_placeholder:
-            status_placeholder.success("✅ Download complete!")
-        
-        script, error = process_video_from_path(tmp_path, video_name, vision_model_name, writer_model_name, style_text, custom_prompt, status_placeholder)
-        return script, error
-        
+        out = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3").name
+        rs = f"+{r}%" if r >= 0 else f"{r}%"
+        async def _g():
+            await edge_tts.Communicate(txt, v, rate=rs).save(out)
+        asyncio.run(_g())
+        return out, None
     except Exception as e:
         return None, str(e)
+
+# === CONTENT TYPES AND DURATION SETTINGS ===
+def get_content_types():
+    return {
+        "📰 ဆောင်းပါး (Article)": "article",
+        "🏆 အောင်မြင်ရေးနည်းလမ်း (Success Tips)": "success_tips",
+        "📖 ဝတ္ထုတို (Short Story)": "short_story",
+        "🧸 ပုံပြင်တို (Short Tale)": "short_tale",
+        "📢 သတင်း (News)": "news",
+        "🎬 ဇာတ်လမ်း (Drama)": "drama",
+        "👻 သရဲဇာတ်လမ်း (Horror Story)": "horror_story",
+        "💔 ဂမ္ဘီရဇာတ်လမ်း (Tragic Story)": "tragic_story",
+        "💕 အချစ်ဇာတ်လမ်း (Romance)": "romance",
+        "🔮 စိတ်ကူးယဉ် (Fantasy)": "fantasy",
+        "🔍 လျှို့ဝှက်ဆန်းကြယ် (Mystery)": "mystery",
+        "😂 ဟာသ (Comedy)": "comedy",
+        "💪 လှုံ့ဆော်စာ (Motivational)": "motivational",
+        "📚 ပညာရေး (Educational)": "educational",
+        "🎯 Custom (စိတ်ကြိုက်)": "custom"
+    }
+
+def get_duration_options():
+    return {
+        "⚡ 1 မိနစ် (~150 words)": 150,
+        "📝 3 မိနစ် (~450 words)": 450,
+        "📄 5 မိနစ် (~750 words)": 750,
+        "📑 10 မိနစ် (~1500 words)": 1500,
+        "📃 15 မိနစ် (~2250 words)": 2250,
+        "📋 20 မိနစ် (~3000 words)": 3000,
+        "📚 25 မိနစ် (~3750 words)": 3750,
+        "📖 30 မိနစ် (~4500 words)": 4500,
+        "📕 35 မိနစ် (~5250 words)": 5250,
+        "📗 45 မိနစ် (~6750 words)": 6750,
+        "📘 1 နာရီ (~9000 words)": 9000
+    }
+
+def get_content_prompt(content_type, title, duration_words, custom_instructions=""):
+    base_prompts = {
+        "article": f"""ခေါင်းစဉ် "{title}" နဲ့ ပတ်သက်တဲ့ ဆောင်းပါးတစ်ပုဒ် ရေးပါ။
+- အချက်အလက်ပြည့်စုံစွာ ရေးပါ
+- ဖတ်ရှုသူစိတ်ဝင်စားစေမယ့် အဖွင့်စာပိုဒ်နဲ့ စတင်ပါ
+- ကျွမ်းကျင်မှုနဲ့ ယုံကြည်စိတ်ချရမှု ပေါ်လွင်အောင် ရေးပါ""",
+
+        "success_tips": f"""ခေါင်းစဉ် "{title}" နဲ့ ပတ်သက်တဲ့ အောင်မြင်ရေးနည်းလမ်းများ ရေးပါ။
+- လက်တွေ့ကျတဲ့ အကြံဉာဏ်များ ပေးပါ
+- ဥပမာများ ထည့်သွင်းပါ
+- လှုံ့ဆော်စေတဲ့ ပုံစံဖြင့် ရေးပါ""",
+
+        "short_story": f"""ခေါင်းစဉ် "{title}" နဲ့ ဝတ္ထုတိုတစ်ပုဒ် ရေးပါ။
+- ဖတ်ရှုသူကို ဆွဲဆောင်နိုင်တဲ့ အစနဲ့ စတင်ပါ
+- ဇာတ်ကောင်တွေရဲ့ စိတ်ခံစားချက်ကို ဖော်ပြပါ
+- အဆုံးသတ်မှာ သင်ခန်းစာ သို့မဟုတ် အံ့အားသင့်စရာ ထည့်ပါ""",
+
+        "short_tale": f"""ခေါင်းစဉ် "{title}" နဲ့ ပုံပြင်တိုတစ်ပုဒ် ရေးပါ။
+- ကလေးများ သို့မဟုတ် လူတိုင်းဖတ်ရှုနိုင်အောင် ရေးပါ
+- သင်ခန်းစာ ပါရှိအောင် ရေးပါ
+- စိတ်ဝင်စားစရာ ဖြစ်စေပါ""",
+
+        "news": f"""ခေါင်းစဉ် "{title}" နဲ့ ပတ်သက်တဲ့ သတင်းတစ်ပုဒ် ရေးပါ။
+- ဂျာနယ်လစ် ပုံစံဖြင့် ရေးပါ
+- Who, What, When, Where, Why ပါဝင်အောင် ရေးပါ
+- တိကျမှန်ကန်သော ပုံစံဖြင့် ရေးပါ""",
+
+        "drama": f"""ခေါင်းစဉ် "{title}" နဲ့ ဇာတ်လမ်းတစ်ပုဒ် ရေးပါ။
+- စိတ်လှုပ်ရှားစေတဲ့ ဇာတ်လမ်းဖွဲ့ပါ
+- ဇာတ်ကောင်တွေရဲ့ dialog များ ထည့်ပါ
+- တင်းမာမှု၊ ပဋိပက္ခ ပါဝင်အောင် ရေးပါ""",
+
+        "horror_story": f"""ခေါင်းစဉ် "{title}" နဲ့ သရဲဇာတ်လမ်းတစ်ပုဒ် ရေးပါ။
+- ထိတ်လန့်စေတဲ့ ပတ်ဝန်းကျင် ဖန်တီးပါ
+- တဖြည်းဖြည်း တင်းမာလာအောင် ရေးပါ
+- ကြောက်စရာကောင်းတဲ့ အဆုံးသတ် ပေးပါ""",
+
+        "tragic_story": f"""ခေါင်းစဉ် "{title}" နဲ့ ဂမ္ဘီရဇာတ်လမ်းတစ်ပုဒ် ရေးပါ။
+- နက်နဲတဲ့ ခံစားချက်များ ဖော်ပြပါ
+- ဖတ်ရှုသူ မျက်ရည်ကျစေလောက်အောင် ရေးပါ
+- ဘဝသင်ခန်းစာ ပါဝင်အောင် ရေးပါ""",
+
+        "romance": f"""ခေါင်းစဉ် "{title}" နဲ့ အချစ်ဇာတ်လမ်းတစ်ပုဒ် ရေးပါ။
+- ချစ်စရာကောင်းတဲ့ ဇာတ်ကောင်တွေ ဖန်တီးပါ
+- စိတ်လှုပ်ရှားစေတဲ့ ခံစားချက်များ ဖော်ပြပါ
+- ရင်ခုန်စရာ အခိုက်အတန့်များ ထည့်ပါ""",
+
+        "fantasy": f"""ခေါင်းစဉ် "{title}" နဲ့ စိတ်ကူးယဉ်ဇာတ်လမ်းတစ်ပုဒ် ရေးပါ။
+- ထူးဆန်းတဲ့ ကမ္ဘာတစ်ခု ဖန်တီးပါ
+- မှော်အတတ်၊ ထူးဆန်းသောအရာများ ထည့်ပါ
+- စိတ်ဝင်စားစရာ စွန့်စားခန်း ရေးပါ""",
+
+        "mystery": f"""ခေါင်းစဉ် "{title}" နဲ့ လျှို့ဝှက်ဆန်းကြယ်ဇာတ်လမ်းတစ်ပုဒ် ရေးပါ။
+- စုံထောက်ပုံစံ သို့မဟုတ် လျှို့ဝှက်ချက်တွေ ထည့်ပါ
+- ဖတ်ရှုသူကို ခန့်မှန်းခိုင်းပါ
+- အံ့အားသင့်စရာ အဆုံးသတ် ပေးပါ""",
+
+        "comedy": f"""ခေါင်းစဉ် "{title}" နဲ့ ဟာသဇာတ်လမ်းတစ်ပုဒ် ရေးပါ။
+- ရယ်စရာကောင်းတဲ့ အခြေအနေများ ဖန်တီးပါ
+- ဟာသဆန်တဲ့ dialog များ ထည့်ပါ
+- ပျော်ရွှင်စေတဲ့ အဆုံးသတ် ပေးပါ""",
+
+        "motivational": f"""ခေါင်းစဉ် "{title}" နဲ့ လှုံ့ဆော်စာတစ်ပုဒ် ရေးပါ။
+- အားပေးစကားများ ထည့်ပါ
+- တကယ့်ဘဝ ဥပမာများ ထည့်ပါ
+- လုပ်ဆောင်နိုင်တဲ့ အကြံဉာဏ်များ ပေးပါ""",
+
+        "educational": f"""ခေါင်းစဉ် "{title}" နဲ့ ပညာရေးဆိုင်ရာ အကြောင်းအရာ ရေးပါ။
+- ရှင်းလင်းလွယ်ကူအောင် ရေးပါ
+- ဥပမာများနဲ့ ရှင်းပြပါ
+- သိမှတ်စရာ အချက်များ ထည့်ပါ""",
+
+        "custom": f"""ခေါင်းစဉ် "{title}" နဲ့ content ရေးပါ။"""
+    }
     
-    finally:
-        cleanup_temp_file(tmp_path)
-        force_memory_cleanup()
-
-# --- MAIN TITLE ---
-st.markdown("""
-<div class="main-title">
-    <h1>✨ Ultimate AI Studio</h1>
-    <p>// YOUR ALL-IN-ONE CREATIVE DASHBOARD //</p>
-</div>
-""", unsafe_allow_html=True)
-
-# --- LIBRARY STATUS CHECK ---
-missing_libs = []
-if not PDF_AVAILABLE:
-    missing_libs.append("PyPDF2")
-if not DOCX_AVAILABLE:
-    missing_libs.append("python-docx")
-if not GDOWN_AVAILABLE:
-    missing_libs.append("gdown")
-
-if missing_libs:
-    st.warning(f"⚠️ Optional libraries missing: {', '.join(missing_libs)}. Add to requirements.txt.")
-
-# --- TOP CONTROL BAR ---
-with st.container(border=True):
-    col_api, col_vision, col_writer = st.columns([2, 1, 1])
+    prompt = base_prompts.get(content_type, base_prompts["article"])
     
-    with col_api:
-        api_key = st.text_input("🔑 Google API Key", type="password", placeholder="Paste your API key here...", label_visibility="collapsed")
+    if custom_instructions:
+        prompt += f"\n\nအထူးညွှန်ကြားချက်များ:\n{custom_instructions}"
     
-    with col_vision:
-        vision_model_name = st.selectbox(
-            "Vision Model",
-            [
-                "models/gemini-2.5-flash",
-                "models/gemini-2.5-pro",
-                "models/gemini-3-pro-preview",
-                "gemini-1.5-flash",
-                "gemini-1.5-pro",
-                "gemini-2.0-flash-exp",
-            ],
-            index=0,
-            help="Model for video analysis",
-            label_visibility="collapsed"
-        )
+    prompt += f"""
+
+**အရေးကြီး**:
+- စာလုံးရေ: {duration_words} words ဝန်းကျင် ဖြစ်ရမည်
+- ဘာသာစကား: မြန်မာဘာသာဖြင့်သာ ရေးပါ
+- အရည်အသွေး: ပရော်ဖက်ရှင်နယ် content creator အဆင့် ဖြစ်ရမည်
+- ဖော်မတ်: TTS အတွက် သင့်တော်သော ပုံစံဖြင့် ရေးပါ (အပိုဒ်ခွဲ၊ စာကြောင်းတိုများ)
+
+ယခုပဲ ရေးပါ။ မိတ်ဆက်စာ မလိုပါ။"""
     
-    with col_writer:
-        writer_model_name = st.selectbox(
-            "Writer Model",
-            [
-                "gemini-1.5-flash",
-                "gemini-2.0-flash-exp",
-                "models/gemini-2.5-flash",
-                "models/gemini-3-pro-preview",
-                "gemini-1.5-pro",
-                "models/gemini-2.5-pro",
-            ],
-            index=0,
-            help="Model for script writing",
-            label_visibility="collapsed"
-        )
+    return prompt
+
+# === INITIALIZE SESSION STATE ===
+def init_st():
+    defaults = {
+        'generated_images': [],
+        'tts_audio': None,
+        'user_session': None,
+        'content_result': None
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+init_st()
+
+# === LOGIN SYSTEM ===
+if not st.session_state['user_session']:
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem 0;">
+        <h1 style="font-size: 2.5rem; margin-bottom: 0.5rem;">🎬 AI Studio Pro</h1>
+        <p style="color: #94a3b8; font-size: 1rem;">Content Creator's Ultimate Toolkit</p>
+    </div>
+    """, unsafe_allow_html=True)
     
-    if api_key:
-        try:
-            genai.configure(api_key=api_key)
-        except Exception:
-            pass
-
-# --- TABS ---
-st.write("") 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎬 Movie Recap", "🌍 Translator", "🎨 Thumbnail AI", "✍️ Script Rewriter", "📰 AI News"])
-
-# ==========================================
-# TAB 1: MOVIE RECAP
-# ==========================================
-with tab1:
-    st.write("")
-    col_left, col_right = st.columns([1, 1], gap="medium")
-
-    with col_left:
+    st.markdown("---")
+    
+    t1, t2 = st.tabs(["🔐 Login", "📝 Sign Up"])
+    
+    with t1:
         with st.container(border=True):
-            st.subheader("📂 Add Videos to Queue")
+            st.subheader("Welcome Back!")
+            with st.form("login_form"):
+                e = st.text_input("📧 Email", placeholder="your@email.com")
+                p = st.text_input("🔑 Password", type="password", placeholder="Enter password")
+                if st.form_submit_button("Login", use_container_width=True):
+                    if e and p:
+                        u, m = login(e, p)
+                        if u:
+                            st.session_state['user_session'] = u
+                            st.rerun()
+                        elif m == "Pending approval":
+                            st.warning("⏳ Your account is pending admin approval")
+                        else:
+                            st.error(f"❌ {m}")
+                    else:
+                        st.warning("Please fill in all fields")
+    
+    with t2:
+        with st.container(border=True):
+            st.subheader("Create Account")
+            new_email = st.text_input("📧 Email", key="reg_email", placeholder="your@email.com")
+            new_pass = st.text_input("🔑 Password", type="password", key="reg_pass", placeholder="Create password")
+            new_pass2 = st.text_input("🔑 Confirm Password", type="password", key="reg_pass2", placeholder="Confirm password")
             
-            upload_method = st.radio(
-                "Choose Input Method:",
-                ["📁 Upload Files (Local)", "🔗 Google Drive Links"],
+            if st.button("Sign Up", use_container_width=True):
+                if new_email and new_pass and new_pass2:
+                    if new_pass != new_pass2:
+                        st.error("❌ Passwords don't match")
+                    else:
+                        success, msg = register(new_email, new_pass)
+                        if success:
+                            st.success(f"✅ {msg}")
+                        else:
+                            st.error(f"❌ {msg}")
+                else:
+                    st.warning("Please fill all fields")
+
+else:
+    # === MAIN APP ===
+    user = st.session_state['user_session']
+    
+    # Header
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        st.markdown("""
+        <div style="padding: 0.5rem 0;">
+            <h1 style="margin: 0; font-size: 1.8rem;">🎬 AI Studio Pro</h1>
+            <p style="margin: 0; font-size: 0.85rem; color: #94a3b8;">Content Creator's Toolkit</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state['user_session'] = None
+            st.rerun()
+    
+    st.caption(f"👤 {user['email']}")
+    
+    # Admin Panel
+    if user.get('is_admin'):
+        with st.expander("🔧 Admin Panel"):
+            if supabase:
+                users = supabase.table('users').select('*').order('created_at', desc=True).execute().data or []
+                for u in users:
+                    c1, c2, c3 = st.columns([3, 1, 1])
+                    with c1:
+                        st.write(u['email'])
+                    with c2:
+                        st.caption("✅ Active" if u['approved'] else "⏳ Pending")
+                    with c3:
+                        if u['email'] != user['email'] and st.button("Toggle", key=f"t_{u['id']}"):
+                            supabase.table('users').update({'approved': not u['approved']}).eq('id', u['id']).execute()
+                            st.rerun()
+    
+    st.markdown("---")
+    
+    # === API KEY SETTINGS ===
+    with st.container(border=True):
+        st.subheader("⚙️ API Settings")
+        st.markdown("""
+        <p style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 1rem;">
+            API Key နှစ်မျိုးထည့်နိုင်ပါတယ်။ Pro account (free tier) သို့မဟုတ် Paid account ကို သုံးနိုင်ပါတယ်။
+        </p>
+        """, unsafe_allow_html=True)
+        
+        key_type = st.radio(
+            "API Key Type",
+            ["🆓 Pro Account (Free Tier)", "💳 Paid Account (Billing Enabled)"],
+            horizontal=True,
+            help="Pro account မှာ rate limits ရှိပါတယ်။ Paid account က unlimited usage ရပါတယ်။"
+        )
+        
+        if "Pro Account" in key_type:
+            api_key = st.text_input(
+                "🔑 Google AI Pro API Key",
+                type="password",
+                placeholder="AIza...",
+                help="Google AI Studio မှ ရယူနိုင်ပါတယ်: https://aistudio.google.com/apikey"
+            )
+            st.info("💡 Pro account မှာ တစ်မိနစ်လျှင် requests 15 ခုပဲ သုံးနိုင်ပါတယ်။ Rate limit error ရရင် ခဏစောင့်ပြီး ပြန်ကြိုးစားပါ။")
+        else:
+            api_key = st.text_input(
+                "🔑 Google AI Paid API Key",
+                type="password",
+                placeholder="AIza...",
+                help="Billing enabled API key ထည့်ပါ"
+            )
+            st.success("✅ Paid account ဖြစ်လျှင် unlimited usage ရပါတယ်။")
+        
+        if api_key:
+            try:
+                genai.configure(api_key=api_key)
+                st.success("✅ API Connected Successfully!")
+            except Exception as e:
+                st.error(f"❌ Invalid API Key: {str(e)}")
+    
+    st.markdown("---")
+    
+    # === MAIN TABS ===
+    tab1, tab2, tab3, tab4 = st.tabs(["✍️ Content", "🌐 Translate", "🎙️ TTS", "🖼️ Thumbnail"])
+    
+    # === TAB 1: CONTENT CREATOR ===
+    with tab1:
+        st.header("✍️ Content Creator")
+        st.markdown("""
+        <p style="color: #94a3b8; margin-bottom: 1rem;">
+            နှစ်သက်ရာခေါင်းစဉ်ပေးလိုက်တာနဲ့ အရည်အသွေးမြင့် content ဖန်တီးပေးပါမယ်။
+        </p>
+        """, unsafe_allow_html=True)
+        
+        with st.container(border=True):
+            # Title input
+            content_title = st.text_input(
+                "📝 ခေါင်းစဉ် (Title)",
+                placeholder="ဥပမာ: ဘဝမှာ အောင်မြင်ဖို့ လိုအပ်တဲ့ အရာ ၅ ခု",
+                help="ရေးချင်တဲ့ content ရဲ့ ခေါင်းစဉ်ကို ထည့်ပါ"
+            )
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Content type selection
+                content_types = get_content_types()
+                selected_type = st.selectbox(
+                    "📂 Content အမျိုးအစား",
+                    list(content_types.keys()),
+                    help="ရေးချင်တဲ့ content အမျိုးအစားကို ရွေးပါ"
+                )
+            
+            with col2:
+                # Duration selection
+                durations = get_duration_options()
+                selected_duration = st.selectbox(
+                    "⏱️ Content ကြာချိန်",
+                    list(durations.keys()),
+                    help="Video duration အရ content အရှည်ကို ရွေးပါ"
+                )
+            
+            # Model selection
+            content_model = st.selectbox(
+                "🤖 AI Model",
+                [
+                    "models/gemini-2.5-flash",
+                    "models/gemini-2.5-pro",
+                    "gemini-2.0-flash-exp",
+                    "gemini-1.5-flash",
+                    "models/gemini-3-flash-preview",
+                    "models/gemini-3-pro-preview"
+                ],
+                help="Pro model များက ပိုကောင်းသော်လည်း ပိုနှေးပါတယ်"
+            )
+            
+            # Custom instructions (expandable)
+            with st.expander("🎨 Custom Instructions (Optional)"):
+                custom_instructions = st.text_area(
+                    "အထူးညွှန်ကြားချက်များ",
+                    placeholder="ဥပမာ: ရယ်စရာတွေ ထည့်ပေးပါ၊ Gen Z ပုံစံဖြင့် ရေးပါ...",
+                    height=100,
+                    help="သင့်စိတ်ကြိုက် ညွှန်ကြားချက်များ ထည့်နိုင်ပါတယ်"
+                )
+            
+            # Generate button
+            if st.button("✨ Generate Content", use_container_width=True, type="primary"):
+                if not api_key:
+                    st.error("❌ API Key ထည့်ပါ!")
+                elif not content_title.strip():
+                    st.warning("⚠️ ခေါင်းစဉ် ထည့်ပါ!")
+                else:
+                    content_type_value = content_types[selected_type]
+                    word_count = durations[selected_duration]
+                    
+                    # Custom type handling
+                    if content_type_value == "custom" and not custom_instructions:
+                        st.warning("⚠️ Custom အမျိုးအစားအတွက် instructions ထည့်ပါ!")
+                    else:
+                        with st.spinner(f"✍️ {selected_duration} content ရေးနေပါတယ်..."):
+                            try:
+                                model = genai.GenerativeModel(content_model)
+                                prompt = get_content_prompt(
+                                    content_type_value,
+                                    content_title,
+                                    word_count,
+                                    custom_instructions
+                                )
+                                
+                                response, error = call_api(model, prompt, 600)
+                                
+                                if response:
+                                    result, _ = get_text(response)
+                                    if result:
+                                        st.session_state['content_result'] = result
+                                        st.success("✅ Content ဖန်တီးပြီးပါပြီ!")
+                                else:
+                                    st.error(f"❌ Error: {error}")
+                            except Exception as e:
+                                st.error(f"❌ Error: {str(e)}")
+        
+        # Display result
+        if st.session_state.get('content_result'):
+            with st.container(border=True):
+                st.subheader("📄 Generated Content")
+                
+                result = st.session_state['content_result']
+                
+                # Word count display
+                word_count = len(result.split())
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("📊 Words", f"{word_count:,}")
+                with col2:
+                    st.metric("⏱️ Read Time", f"~{max(1, word_count//200)} min")
+                with col3:
+                    st.metric("🎙️ Speak Time", f"~{max(1, word_count//150)} min")
+                
+                # Content display
+                st.text_area("Content", result, height=400, label_visibility="collapsed")
+                
+                # Download buttons
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.download_button(
+                        "📥 Download TXT",
+                        result,
+                        f"{content_title[:20]}_content.txt",
+                        use_container_width=True
+                    )
+                with col2:
+                    if st.button("🗑️ Clear", use_container_width=True):
+                        st.session_state['content_result'] = None
+                        st.rerun()
+    
+    # === TAB 2: TRANSLATE ===
+    with tab2:
+        st.header("🌐 Translator")
+        
+        # Important notice
+        st.markdown("""
+        <div style="background: rgba(34, 211, 238, 0.1); border: 1px solid rgba(34, 211, 238, 0.3); border-radius: 12px; padding: 1rem; margin-bottom: 1rem;">
+            <p style="color: #22d3ee; margin: 0; font-size: 0.9rem;">
+                💡 <strong>အကြံပြုချက်:</strong> Google Drive link (သို့) File upload နည်းလမ်းက အဆင်အပြေဆုံးဖြစ်ပါတယ်။ 
+                YouTube/TikTok link များမှာ rate limit ပြဿနာ ရှိနိုင်ပါတယ်။
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        with st.container(border=True):
+            col1, col2 = st.columns([3, 1])
+            
+            with col2:
+                trans_model = st.selectbox(
+                    "🤖 Model",
+                    [
+                        "models/gemini-2.5-flash",
+                        "models/gemini-2.5-pro",
+                        "gemini-2.0-flash-exp",
+                        "gemini-1.5-flash"
+                    ],
+                    key="trans_model"
+                )
+            
+            with col1:
+                languages = {
+                    "🇲🇲 Burmese": "Burmese",
+                    "🇺🇸 English": "English",
+                    "🇹🇭 Thai": "Thai",
+                    "🇨🇳 Chinese": "Chinese",
+                    "🇯🇵 Japanese": "Japanese",
+                    "🇰🇷 Korean": "Korean"
+                }
+                target_lang = st.selectbox("🎯 Target Language", list(languages.keys()))
+            
+            # Input method
+            input_method = st.radio(
+                "📁 Input Method",
+                ["📤 File Upload (Recommended)", "🔗 Video URL"],
+                horizontal=True,
+                help="File upload နှင့် Google Drive link က ပိုမိုယုံကြည်စိတ်ချရပါတယ်"
+            )
+            
+            if "File Upload" in input_method:
+                trans_file = st.file_uploader(
+                    "Upload File",
+                    type=["mp3", "mp4", "txt", "srt", "docx"],
+                    help="Audio, Video, Text files များ upload လုပ်နိုင်ပါတယ်"
+                )
+                video_url = None
+            else:
+                trans_file = None
+                video_url = st.text_input(
+                    "🔗 Video URL",
+                    placeholder="YouTube, Facebook, TikTok, Google Drive link",
+                    help="Google Drive link က အဆင်အပြေဆုံးဖြစ်ပါတယ်"
+                )
+            
+            # Style file (optional)
+            with st.expander("🎨 Style Reference (Optional)"):
+                style_file = st.file_uploader(
+                    "Style File",
+                    type=["txt", "pdf", "docx"],
+                    key="trans_style",
+                    help="ဘာသာပြန်ပုံစံကို ကိုးကားဖို့ file upload လုပ်နိုင်ပါတယ်"
+                )
+            
+            style_text = ""
+            if style_file:
+                content = read_file(style_file)
+                if content:
+                    style_text = content[:3000]
+                    st.success(f"✅ Style loaded: {style_file.name}")
+            
+            # Translate button
+            if st.button("🌐 Translate", use_container_width=True, type="primary"):
+                if not api_key:
+                    st.error("❌ API Key ထည့်ပါ!")
+                elif not trans_file and not video_url:
+                    st.warning("⚠️ File upload လုပ်ပါ သို့မဟုတ် URL ထည့်ပါ!")
+                else:
+                    target = languages[target_lang]
+                    model = genai.GenerativeModel(trans_model)
+                    style_instruction = f"\n\nStyle reference:\n{style_text}" if style_text else ""
+                    
+                    # Video URL handling
+                    if video_url and not trans_file:
+                        progress = st.progress(0)
+                        status = st.empty()
+                        
+                        status.info("📥 Downloading video...")
+                        progress.progress(10)
+                        
+                        path, err = download_video_url(video_url, status)
+                        
+                        if path:
+                            progress.progress(30)
+                            status.info("📤 Uploading to Gemini...")
+                            
+                            gem_file = upload_gem(path)
+                            
+                            if gem_file:
+                                status.info("🌐 Transcribing & Translating...")
+                                progress.progress(50)
+                                
+                                response, err = call_api(
+                                    model,
+                                    [gem_file, f"Listen to this video/audio carefully. Transcribe all spoken words and translate them to {target}. Return ONLY the translated text in {target} language.{style_instruction}"],
+                                    900
+                                )
+                                
+                                progress.progress(90)
+                                
+                                if response:
+                                    result, _ = get_text(response)
+                                    progress.progress(100)
+                                    status.success("✅ Translation completed!")
+                                    
+                                    if result:
+                                        st.text_area("📝 Result", result, height=300)
+                                        
+                                        # Prepare downloads
+                                        if '-->' in result:
+                                            srt_result = result
+                                            txt_result = srt_to_text(result)
+                                        else:
+                                            srt_result = text_to_srt(result, 3)
+                                            txt_result = result
+                                        
+                                        col1, col2 = st.columns(2)
+                                        with col1:
+                                            st.download_button("📥 TXT Download", txt_result, "translated.txt", use_container_width=True)
+                                        with col2:
+                                            st.download_button("📥 SRT Download", srt_result, "translated.srt", use_container_width=True)
+                                else:
+                                    progress.empty()
+                                    status.error(f"❌ Error: {err if err else 'Timeout'}")
+                                
+                                try:
+                                    genai.delete_file(gem_file.name)
+                                except:
+                                    pass
+                            else:
+                                progress.empty()
+                                status.error("❌ Upload to Gemini failed")
+                            
+                            rm_file(path)
+                        else:
+                            status.error(f"❌ Download failed: {err}")
+                    
+                    # File upload handling
+                    elif trans_file:
+                        ext = trans_file.name.split('.')[-1].lower()
+                        
+                        if ext in ['txt', 'srt']:
+                            txt = trans_file.getvalue().decode("utf-8")
+                            st.info(f"📄 File: {trans_file.name} | {len(txt):,} characters")
+                            
+                            progress = st.progress(0)
+                            status = st.empty()
+                            
+                            status.info("🌐 Translating...")
+                            progress.progress(30)
+                            
+                            response, err = call_api(
+                                model,
+                                f"Translate to {target}. Return ONLY translated text.{style_instruction}\n\n{txt}",
+                                900
+                            )
+                            
+                            progress.progress(90)
+                            
+                            if response:
+                                result, _ = get_text(response)
+                                progress.progress(100)
+                                status.success("✅ Done!")
+                                
+                                if result:
+                                    st.text_area("📝 Result", result, height=300)
+                                    
+                                    if '-->' in result:
+                                        srt_result = result
+                                        txt_result = srt_to_text(result)
+                                    else:
+                                        srt_result = text_to_srt(result, 3)
+                                        txt_result = result
+                                    
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        st.download_button("📥 TXT", txt_result, f"trans_{trans_file.name.rsplit('.', 1)[0]}.txt", use_container_width=True)
+                                    with col2:
+                                        st.download_button("📥 SRT", srt_result, f"trans_{trans_file.name.rsplit('.', 1)[0]}.srt", use_container_width=True)
+                            else:
+                                progress.empty()
+                                status.error(f"❌ Error: {err if err else 'Timeout'}")
+                        
+                        elif ext == 'docx':
+                            txt = read_file(trans_file)
+                            if txt:
+                                st.info(f"📄 File: {trans_file.name} | {len(txt):,} characters")
+                                
+                                progress = st.progress(0)
+                                status = st.empty()
+                                
+                                status.info("🌐 Translating...")
+                                progress.progress(30)
+                                
+                                response, err = call_api(
+                                    model,
+                                    f"Translate to {target}. Return ONLY translated text.{style_instruction}\n\n{txt}",
+                                    900
+                                )
+                                
+                                progress.progress(90)
+                                
+                                if response:
+                                    result, _ = get_text(response)
+                                    progress.progress(100)
+                                    status.success("✅ Done!")
+                                    
+                                    if result:
+                                        st.text_area("📝 Result", result, height=300)
+                                        st.download_button("📥 Download", result, f"trans_{trans_file.name.rsplit('.', 1)[0]}.txt", use_container_width=True)
+                                else:
+                                    progress.empty()
+                                    status.error(f"❌ Error: {err if err else 'Timeout'}")
+                        
+                        else:  # Audio/Video files
+                            st.info(f"📁 File: {trans_file.name}")
+                            
+                            progress = st.progress(0)
+                            status = st.empty()
+                            
+                            status.info("📤 Uploading file...")
+                            progress.progress(20)
+                            
+                            path, _ = save_up(trans_file)
+                            
+                            if path:
+                                status.info("🔄 Processing...")
+                                progress.progress(40)
+                                
+                                gem_file = upload_gem(path)
+                                
+                                if gem_file:
+                                    status.info("🌐 Transcribing & Translating...")
+                                    progress.progress(60)
+                                    
+                                    response, err = call_api(
+                                        model,
+                                        [gem_file, f"Listen to this video/audio carefully. Transcribe all spoken words and translate them to {target}. Return ONLY the translated text.{style_instruction}"],
+                                        900
+                                    )
+                                    
+                                    progress.progress(90)
+                                    
+                                    if response:
+                                        result, _ = get_text(response)
+                                        progress.progress(100)
+                                        status.success("✅ Done!")
+                                        
+                                        if result:
+                                            st.text_area("📝 Result", result, height=300)
+                                            
+                                            if '-->' in result:
+                                                srt_result = result
+                                                txt_result = srt_to_text(result)
+                                            else:
+                                                srt_result = text_to_srt(result, 3)
+                                                txt_result = result
+                                            
+                                            col1, col2 = st.columns(2)
+                                            with col1:
+                                                st.download_button("📥 TXT", txt_result, f"{trans_file.name.rsplit('.', 1)[0]}_trans.txt", use_container_width=True)
+                                            with col2:
+                                                st.download_button("📥 SRT", srt_result, f"{trans_file.name.rsplit('.', 1)[0]}_trans.srt", use_container_width=True)
+                                    else:
+                                        progress.empty()
+                                        status.error(f"❌ Error: {err if err else 'Timeout'}")
+                                    
+                                    try:
+                                        genai.delete_file(gem_file.name)
+                                    except:
+                                        pass
+                                else:
+                                    progress.empty()
+                                    status.error("❌ Upload failed")
+                                
+                                rm_file(path)
+    
+    # === TAB 3: TTS ===
+    with tab3:
+        st.header("🎙️ Text to Speech")
+        
+        with st.container(border=True):
+            engine = st.radio(
+                "🔊 TTS Engine",
+                ["⚡ Edge TTS (Free, Myanmar)", "✨ Gemini TTS (Pro, Styled)"],
                 horizontal=True
             )
             
             st.markdown("---")
             
-            if upload_method == "📁 Upload Files (Local)":
-                # WARNING for large files
-                st.warning("⚠️ **200MB Limit:** Files over 200MB will fail. Use Google Drive links for large files.")
-                
-                st.info("📌 Upload videos (max 200MB per file)")
-                
-                uploaded_videos = st.file_uploader(
-                    "Select Video Files",
-                    type=["mp4", "mkv", "mov"],
-                    accept_multiple_files=True,
-                    key="file_uploader"
-                )
-                
-                if st.button("➕ Add Files to Queue", use_container_width=True):
-                    if not uploaded_videos:
-                        st.warning("Please select video files!")
-                    else:
-                        available_slots = 10 - len(st.session_state['video_queue'])
-                        if available_slots <= 0:
-                            st.error("Queue is full! Maximum 10 videos.")
+            if "Edge TTS" in engine:
+                if not EDGE_TTS_AVAILABLE:
+                    st.error("❌ Edge TTS not available")
+                else:
+                    tts_text = st.text_area(
+                        "📝 Text to Convert",
+                        height=200,
+                        placeholder="ဒီမှာ စာသားရိုက်ထည့်ပါ...",
+                        key="edge_text"
+                    )
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        voice = st.selectbox("🔊 Voice", list(edge_v().keys()), key="edge_voice")
+                    with col2:
+                        rate = st.slider("⚡ Speed", -50, 50, 0, format="%d%%", key="edge_rate")
+                    
+                    st.caption(f"📊 Characters: {len(tts_text)}")
+                    
+                    if st.button("🎙️ Generate Audio", use_container_width=True, key="gen_edge", type="primary"):
+                        if tts_text.strip():
+                            with st.spinner("🔄 Generating..."):
+                                path, err = gen_edge(tts_text, edge_v()[voice], rate)
+                                if path:
+                                    st.session_state['tts_audio'] = path
+                                    st.success("✅ Audio generated!")
+                                else:
+                                    st.error(f"❌ {err}")
                         else:
-                            files_to_add = uploaded_videos[:available_slots]
-                            added_count = 0
-                            
-                            for video in files_to_add:
-                                try:
-                                    # Check file size
-                                    video.seek(0, 2)
-                                    file_size = video.tell()
-                                    video.seek(0)
-                                    
-                                    if file_size > 200 * 1024 * 1024:  # 200MB
-                                        st.error(f"❌ {video.name} is too large ({file_size/(1024*1024):.0f}MB). Use Google Drive for files >200MB.")
-                                        continue
-                                    
-                                    status_msg = st.empty()
-                                    status_msg.info(f"💾 Saving {video.name}...")
-                                    
-                                    tmp_path, error = save_uploaded_file_chunked(video, status_msg)
-                                    
-                                    if error:
-                                        st.error(f"Failed to save {video.name}: {error}")
-                                        continue
-                                    
-                                    st.session_state['video_queue'].append({
-                                        'name': video.name,
-                                        'source_type': 'file',
-                                        'file_path': tmp_path,
-                                        'url': None,
-                                        'status': 'waiting',
-                                        'script': None,
-                                        'error': None
-                                    })
-                                    added_count += 1
-                                    status_msg.empty()
-                                    
-                                except Exception as e:
-                                    st.error(f"Failed to add {video.name}: {e}")
-                            
-                            if added_count > 0:
-                                st.success(f"✅ Added {added_count} file(s) to queue!")
-                            
-                            force_memory_cleanup()
-                            st.rerun()
+                            st.warning("⚠️ Enter text first!")
             
-            else:
-                st.success("✅ **Recommended for large files (1GB+)** - Uses gdown for reliable downloads")
-                st.info("📌 Paste Google Drive links (Max 10)")
-                st.markdown("""
-                <small style='opacity: 0.7;'>
-                💡 Make sure files are shared as "Anyone with link can view"
-                </small>
-                """, unsafe_allow_html=True)
-                
-                links_input = st.text_area(
-                    "Video Links (One per line)",
-                    height=200,
-                    placeholder="https://drive.google.com/file/d/XXX/view\nhttps://drive.google.com/file/d/YYY/view",
-                    key="links_input"
-                )
-                
-                if st.button("➕ Add Links to Queue", use_container_width=True):
-                    if not links_input.strip():
-                        st.warning("Please paste video links!")
-                    else:
-                        raw_links = [link.strip() for link in links_input.split('\n') if link.strip()]
-                        available_slots = 10 - len(st.session_state['video_queue'])
-                        
-                        if available_slots <= 0:
-                            st.error("Queue is full! Maximum 10 videos.")
-                        else:
-                            links_to_add = raw_links[:available_slots]
-                            valid_count = 0
-                            
-                            for idx, link in enumerate(links_to_add):
-                                if 'drive.google.com' not in link:
-                                    st.warning(f"⚠️ Skipping invalid link: {link[:50]}...")
-                                    continue
-                                
-                                file_id = extract_file_id_from_url(link)
-                                if not file_id:
-                                    st.warning(f"⚠️ Could not extract file ID from: {link[:50]}...")
-                                    continue
-                                
-                                st.session_state['video_queue'].append({
-                                    'name': f"Video_{len(st.session_state['video_queue']) + 1}",
-                                    'source_type': 'url',
-                                    'file_path': None,
-                                    'url': link,
-                                    'status': 'waiting',
-                                    'script': None,
-                                    'error': None
-                                })
-                                valid_count += 1
-                            
-                            if valid_count > 0:
-                                st.success(f"✅ Added {valid_count} link(s) to queue!")
-                            st.rerun()
-            
-            st.markdown("---")
-            st.markdown("**⚙️ Settings**")
-            
-            # Show selected models
-            st.caption(f"🔬 Vision: {vision_model_name.split('/')[-1]} | ✍️ Writer: {writer_model_name.split('/')[-1]}")
-            
-            with st.expander("📝 Custom Instructions (Optional)", expanded=False):
-                custom_prompt = st.text_area(
-                    "Add your custom instructions here:",
-                    value=st.session_state.get('custom_prompt', ''),
-                    height=100,
-                    placeholder="Example: Focus on romantic scenes, Include character names...",
-                    key="custom_prompt_input"
-                )
-                if custom_prompt:
-                    st.session_state['custom_prompt'] = custom_prompt
-                    st.caption("✅ Custom instructions will be added")
-            
-            style_file = st.file_uploader("📄 Writing Style Reference (Optional)", type=["txt", "pdf", "docx"], key="style_uploader")
-            
-            if style_file:
-                extracted_style = read_file_content(style_file)
-                if extracted_style:
-                    style_text = f"\n\n**WRITING STYLE REFERENCE:**\n{extracted_style[:5000]}\n"
-                    st.session_state['style_text'] = style_text
-                    st.caption(f"✅ Style loaded: {style_file.name}")
-            
-            st.markdown("---")
-            
-            col_start, col_clear = st.columns(2)
-            
-            with col_start:
-                start_disabled = len(st.session_state['video_queue']) == 0 or st.session_state['processing_active']
-                if st.button("🚀 Start Processing", use_container_width=True, disabled=start_disabled):
-                    if not api_key:
-                        st.error("Please enter API Key above.")
-                    else:
-                        st.session_state['processing_active'] = True
-                        st.session_state['current_index'] = 0
-                        st.rerun()
-            
-            with col_clear:
-                if st.button("🗑️ Clear Queue", use_container_width=True, disabled=len(st.session_state['video_queue']) == 0):
-                    for item in st.session_state['video_queue']:
-                        cleanup_temp_file(item.get('file_path'))
+            else:  # Gemini TTS
+                if not GENAI_NEW_AVAILABLE:
+                    st.error("❌ google-genai not installed")
+                else:
+                    tts_text = st.text_area(
+                        "📝 Text to Convert",
+                        height=200,
+                        placeholder="ဒီမှာ စာသားရိုက်ထည့်ပါ...",
+                        key="gem_text"
+                    )
                     
-                    st.session_state['video_queue'] = []
-                    st.session_state['processing_active'] = False
-                    st.session_state['current_index'] = 0
-                    force_memory_cleanup()
-                    st.success("Queue cleared!")
-                    st.rerun()
-
-    with col_right:
-        with st.container(border=True):
-            st.subheader("📋 Processing Queue")
-            
-            if len(st.session_state['video_queue']) == 0:
-                st.info("💡 Queue is empty. Add videos using files or links.")
-                st.markdown("""
-                **Two Ways to Add Videos:**
-                
-                **Method 1: Upload Files** 📁
-                - For files under 200MB only
-                - Larger files will fail (Streamlit limit)
-                
-                **Method 2: Google Drive Links** 🔗 ✅ Recommended
-                - Upload videos to Google Drive first
-                - Share → "Anyone with link can view"
-                - Supports large files (1GB+)
-                """)
-            else:
-                total = len(st.session_state['video_queue'])
-                completed = sum(1 for v in st.session_state['video_queue'] if v['status'] == 'completed')
-                failed = sum(1 for v in st.session_state['video_queue'] if v['status'] == 'failed')
-                waiting = sum(1 for v in st.session_state['video_queue'] if v['status'] == 'waiting')
-                
-                col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
-                with col_stat1:
-                    st.metric("Total", total)
-                with col_stat2:
-                    st.metric("Completed", completed)
-                with col_stat3:
-                    st.metric("Failed", failed)
-                with col_stat4:
-                    st.metric("Waiting", waiting)
-                
-                st.progress(completed / total if total > 0 else 0)
-                
-                st.markdown("---")
-                
-                for idx, item in enumerate(st.session_state['video_queue']):
-                    status_emoji = {
-                        'waiting': '⏳',
-                        'processing': '🔄',
-                        'completed': '✅',
-                        'failed': '❌'
-                    }
+                    # Voice style selection
+                    voice_styles = get_voice_styles()
+                    selected_style = st.selectbox("🎨 Voice Style", list(voice_styles.keys()), key="gem_style")
+                    style_prompt = voice_styles[selected_style]
                     
-                    source_icon = '📁' if item['source_type'] == 'file' else '🔗'
-                    css_class = item['status']
-                    
-                    st.markdown(f"""
-                    <div class='queue-item {css_class}'>
-                        <strong>{status_emoji[item['status']]} {source_icon} {idx + 1}. {item['name']}</strong>
-                        <br><small>Status: {item['status'].upper()}</small>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    if item['status'] == 'completed' and item['script']:
-                        filename = f"{item['name'].rsplit('.', 1)[0]}_recap.txt"
-                        st.download_button(
-                            f"📥 Download Script #{idx + 1}",
-                            item['script'],
-                            file_name=filename,
-                            key=f"download_{idx}"
+                    if "Custom" in selected_style:
+                        style_prompt = st.text_area(
+                            "Custom Style",
+                            height=80,
+                            placeholder="Describe how you want the voice to sound...",
+                            key="custom_voice_style"
                         )
                     
-                    if item['status'] == 'failed' and item['error']:
-                        st.error(f"Error: {item['error'][:300]}")
-        
-        if st.session_state['processing_active']:
-            current_idx = st.session_state['current_index']
-            
-            if current_idx < len(st.session_state['video_queue']):
-                current_item = st.session_state['video_queue'][current_idx]
-                
-                if current_item['status'] == 'waiting':
-                    st.session_state['video_queue'][current_idx]['status'] = 'processing'
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        voice = st.selectbox("🔊 Voice", list(gem_v().keys()), key="gem_voice")
+                    with col2:
+                        tts_model = st.selectbox(
+                            "🤖 Model",
+                            ["gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts"],
+                            key="gem_model"
+                        )
+                    with col3:
+                        speed = st.slider("⚡ Speed", 0.50, 2.00, 1.00, 0.02, key="gem_speed")
                     
-                    with st.container(border=True):
-                        st.markdown(f"### 🔄 Processing: {current_item['name']}")
-                        
-                        status_placeholder = st.empty()
-                        style_text = st.session_state.get('style_text', "")
-                        custom_prompt = st.session_state.get('custom_prompt', "")
-                        
-                        if current_item['source_type'] == 'file':
-                            script, error = process_video_from_path(
-                                current_item['file_path'],
-                                current_item['name'],
-                                vision_model_name,
-                                writer_model_name,
-                                style_text,
-                                custom_prompt,
-                                status_placeholder
-                            )
-                            cleanup_temp_file(current_item['file_path'])
-                        
+                    st.caption(f"📊 Characters: {len(tts_text)}")
+                    
+                    if st.button("🎙️ Generate Audio", use_container_width=True, key="gen_gem", type="primary"):
+                        if not api_key:
+                            st.error("❌ API Key ထည့်ပါ!")
+                        elif not tts_text.strip():
+                            st.warning("⚠️ Enter text first!")
                         else:
-                            script, error = process_video_from_url(
-                                current_item['url'],
-                                current_item['name'],
-                                vision_model_name,
-                                writer_model_name,
-                                style_text,
-                                custom_prompt,
-                                status_placeholder
-                            )
-                        
-                        if script:
-                            st.session_state['video_queue'][current_idx]['status'] = 'completed'
-                            st.session_state['video_queue'][current_idx]['script'] = script
-                            status_placeholder.success(f"✅ Completed: {current_item['name']}")
-                            
-                            filename = f"{current_item['name'].rsplit('.', 1)[0]}_recap.txt"
-                            st.download_button(
-                                "📥 Download Now",
-                                script,
-                                file_name=filename,
-                                key=f"auto_dl_{current_idx}"
-                            )
-                        else:
-                            st.session_state['video_queue'][current_idx]['status'] = 'failed'
-                            st.session_state['video_queue'][current_idx]['error'] = error
-                            status_placeholder.error(f"❌ Failed: {current_item['name']}")
-                        
-                        # Add delay between videos to avoid rate limiting
-                        st.info("⏳ Waiting 10 seconds before next video (rate limit protection)...")
-                        time.sleep(10)
-                        
-                        st.session_state['current_index'] += 1
-                        force_memory_cleanup()
-                        st.rerun()
-            
-            else:
-                completed_count = sum(1 for v in st.session_state['video_queue'] if v['status'] == 'completed')
-                failed_count = sum(1 for v in st.session_state['video_queue'] if v['status'] == 'failed')
+                            with st.spinner(f"🔄 Generating with {tts_model}..."):
+                                path, err = gen_gem_styled(api_key, tts_text, gem_v()[voice], tts_model, style_prompt, speed)
+                                if path:
+                                    st.session_state['tts_audio'] = path
+                                    st.success("✅ Audio generated!")
+                                else:
+                                    st.error(f"❌ {err}")
+        
+        # Audio output
+        if st.session_state.get('tts_audio') and os.path.exists(st.session_state['tts_audio']):
+            with st.container(border=True):
+                st.subheader("🔊 Generated Audio")
                 
-                st.success(f"🎉 All videos processed! ✅ {completed_count} completed, ❌ {failed_count} failed")
-                st.balloons()
-                st.session_state['processing_active'] = False
-
-# ==========================================
-# TAB 2: TRANSLATOR
-# ==========================================
-with tab2:
-    st.write("")
-    c1, c2 = st.columns([1, 1], gap="medium")
+                with open(st.session_state['tts_audio'], 'rb') as f:
+                    audio_bytes = f.read()
+                
+                mime = "audio/wav" if st.session_state['tts_audio'].endswith(".wav") else "audio/mp3"
+                st.audio(audio_bytes, format=mime)
+                
+                ext = "wav" if ".wav" in st.session_state['tts_audio'] else "mp3"
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.download_button("📥 Download Audio", audio_bytes, f"audio.{ext}", mime, use_container_width=True)
+                with col2:
+                    if st.button("🗑️ Clear Audio", use_container_width=True):
+                        rm_file(st.session_state['tts_audio'])
+                        st.session_state['tts_audio'] = None
+                        st.rerun()
     
-    with c1:
+    # === TAB 4: THUMBNAIL ===
+    with tab4:
+        st.header("🖼️ AI Thumbnail Generator")
+        st.caption("Powered by Gemini 3 Pro Image")
+        
         with st.container(border=True):
-            st.subheader("📄 Upload Media")
-            uploaded_file = st.file_uploader("File (.mp3, .mp4, .txt, .srt)", type=["mp3", "mp4", "txt", "srt"], key="translator_uploader")
-            if st.button("🚀 Translate Now", use_container_width=True):
-                if not api_key:
-                    st.error("⚠️ Please enter API Key first!")
-                elif not uploaded_file:
-                    st.warning("⚠️ Please upload a file first!")
-                else:
-                    st.session_state['run_translate'] = True
-
-    with c2:
-        if st.session_state.get('run_translate') and uploaded_file and api_key:
-            with st.container(border=True):
-                st.subheader("📝 Output")
-                try:
-                    file_ext = uploaded_file.name.split('.')[-1].lower()
-                    if file_ext in ['txt', 'srt']:
-                        with st.spinner("📝 Translating text..."):
-                            text_content = uploaded_file.getvalue().decode("utf-8")
-                            model = genai.GenerativeModel(writer_model_name)
-                            res, error = call_gemini_api(model, f"Translate to **Burmese**. Return ONLY translated text.\nInput:\n{text_content}")
-                            if res and not error:
-                                text, _ = get_response_text_safe(res)
-                                if text:
-                                    st.text_area("Result", text, height=300)
-                                    st.download_button("📥 Download", text, file_name=f"trans_{uploaded_file.name}")
-                            else:
-                                st.error(f"Translation failed: {error}")
-                    else:
-                        with st.spinner("🎧 Listening & Translating..."):
-                            tmp_path, error = save_uploaded_file_chunked(uploaded_file)
-                            if error:
-                                st.error(f"Error: {error}")
-                            else:
-                                gemini_file = upload_to_gemini(tmp_path)
-                                if gemini_file:
-                                    model = genai.GenerativeModel(writer_model_name)
-                                    res, error = call_gemini_api(model, [gemini_file, "Generate full transcript in **Burmese**."], timeout=600)
-                                    if res and not error:
-                                        text, _ = get_response_text_safe(res)
-                                        if text:
-                                            st.text_area("Transcript", text, height=300)
-                                            st.download_button("📥 Download", text, file_name=f"{uploaded_file.name}_trans.txt")
-                                    else:
-                                        st.error(f"Transcription failed: {error}")
-                                    try: 
-                                        genai.delete_file(gemini_file.name)
-                                    except: 
-                                        pass
-                                cleanup_temp_file(tmp_path)
-                            force_memory_cleanup()
-                            
-                except Exception as e: 
-                    st.error(f"Error: {e}")
-                st.session_state['run_translate'] = False
-        else:
-            with st.container(border=True):
-                st.info("💡 Upload a file and click 'Translate Now' to start.")
-
-# ==========================================
-# TAB 3: THUMBNAIL AI
-# ==========================================
-with tab3:
-    st.write("")
-    
-    col_thumb_left, col_thumb_right = st.columns([1, 1], gap="medium")
-    
-    with col_thumb_left:
-        with st.container(border=True):
-            st.subheader("🎨 AI Thumbnail Generator")
-            st.markdown("<p style='opacity: 0.7;'>Gemini API နဲ့ Image Generate လုပ်ပါ</p>", unsafe_allow_html=True)
-            
-            st.markdown("**🖼️ Reference Image (Optional):**")
-            ref_image = st.file_uploader(
-                "Upload reference image",
+            # Reference images
+            ref_images = st.file_uploader(
+                "🖼️ Reference Images (Max 10)",
                 type=["png", "jpg", "jpeg", "webp"],
-                key="thumb_ref_image"
+                accept_multiple_files=True,
+                help="Similar style ရှိတဲ့ ပုံများ upload လုပ်နိုင်ပါတယ်"
             )
             
-            if ref_image:
-                col_img_preview, _ = st.columns([1, 2])
-                with col_img_preview:
-                    st.image(ref_image, caption="Reference", width=150)
+            if ref_images:
+                st.caption(f"📷 {len(ref_images)} image(s) uploaded")
+                cols = st.columns(min(len(ref_images), 6))
+                for i, img in enumerate(ref_images[:6]):
+                    with cols[i]:
+                        st.image(img, use_container_width=True)
             
             st.markdown("---")
             
-            st.markdown("**📝 Quick Templates:**")
-            prompt_templates = {
-                "✍️ Custom Prompt": "",
-                "🎬 Movie Recap Thumbnail": "Create a dramatic YouTube movie recap thumbnail, 1280x720 pixels, with cinematic dark color grading, showing dramatic scene with emotional expressions, bold eye-catching title text, professional high contrast style",
-                "😱 Shocking/Dramatic Style": "Create a YouTube thumbnail with shocked surprised expression style, bright red and yellow accent colors, large bold text with outline, arrow pointing to key element, exaggerated expressions, 1280x720 pixels",
-                "🎭 Before/After Comparison": "Create a before and after comparison YouTube thumbnail, split screen design with clear dividing line, contrasting colors for each side, bold BEFORE and AFTER labels, 1280x720 pixels",
-                "🔥 Top 10 List Style": "Create a Top 10 list style YouTube thumbnail, large number prominently displayed, grid collage of related images, bright energetic colors, bold sans-serif title, 1280x720 pixels",
+            # Templates
+            templates = {
+                "🎨 Custom": "",
+                "🎬 Movie Recap": "dramatic YouTube movie recap thumbnail, cinematic lighting, emotional scene, bold title text, film grain effect, dark moody atmosphere",
+                "😱 Shocking": "YouTube thumbnail, shocked surprised expression, bright red yellow background, bold dramatic text, eye-catching, viral style",
+                "👻 Horror": "horror movie thumbnail, dark scary atmosphere, creepy shadows, fear expression, blood red accents, haunted feeling",
+                "😂 Comedy": "funny comedy thumbnail, bright colorful, laughing expression, playful text, cheerful mood",
+                "💕 Romance": "romantic movie thumbnail, soft pink lighting, couple silhouette, heart elements, dreamy bokeh background",
+                "💥 Action": "action movie thumbnail, explosive background, fire sparks, intense expression, dynamic pose, bold red orange colors",
+                "😢 Drama": "emotional drama thumbnail, tears sad expression, rain effect, blue moody lighting, touching moment",
+                "🔮 Fantasy": "fantasy magical thumbnail, glowing effects, mystical atmosphere, enchanted, purple blue colors"
             }
             
-            selected_template = st.selectbox(
-                "Template ရွေးပါ:",
-                list(prompt_templates.keys()),
-                key="thumb_template"
+            selected_template = st.selectbox("📋 Template", list(templates.keys()))
+            
+            # Size options
+            sizes = {
+                "📺 16:9 (1280x720)": "1280x720",
+                "📱 9:16 (720x1280)": "720x1280",
+                "⬜ 1:1 (1024x1024)": "1024x1024",
+                "🖼️ 4:3 (1024x768)": "1024x768"
+            }
+            size = st.selectbox("📐 Size", list(sizes.keys()))
+            
+            # Prompt
+            prompt = st.text_area(
+                "✏️ Prompt",
+                value=templates[selected_template],
+                height=100,
+                placeholder="Describe your thumbnail..."
             )
             
-            default_prompt = prompt_templates[selected_template]
-            user_prompt = st.text_area(
-                "🖼️ Image Prompt:",
-                value=default_prompt,
-                height=150,
-                placeholder="Describe the thumbnail you want to generate...",
-                key="thumb_prompt_input"
-            )
+            # Text and style
+            col1, col2, col3 = st.columns([2, 2, 1])
             
-            st.markdown("**⚙️ Customization:**")
-            col_opt1, col_opt2 = st.columns(2)
+            with col1:
+                add_text = st.text_input("📝 Add Text", placeholder="EP.1, Part 2, etc.")
             
-            with col_opt1:
-                add_text = st.text_input(
-                    "Text on Image:",
-                    placeholder="e.g., EP.1, PART 2",
-                    key="thumb_text"
-                )
+            with col2:
+                text_styles = {
+                    "Default": "bold text",
+                    "Gold 3D": "gold 3D metallic text, shiny, luxurious",
+                    "White 3D Blue": "white 3D text with dark blue outline, bold",
+                    "Yellow 3D Black": "yellow 3D text with black outline, bold impact",
+                    "Red 3D Yellow": "red 3D text with yellow outline, bold dramatic",
+                    "Horror": "creepy horror text, blood dripping, scary font",
+                    "Romance": "elegant romantic pink text, script font"
+                }
+                text_style = st.selectbox("🎨 Text Style", list(text_styles.keys()))
             
-            with col_opt2:
-                num_images = st.selectbox(
-                    "Number of Images:",
-                    [1, 2, 3, 4],
-                    index=0,
-                    key="thumb_num"
-                )
+            with col3:
+                num_images = st.selectbox("🔢 Count", [1, 2, 3, 4])
             
-            style_options = st.multiselect(
-                "Style Modifiers:",
-                ["Cinematic", "Dramatic Lighting", "High Contrast", "Vibrant Colors", "Dark Mood", "Professional", "YouTube Style", "4K Quality"],
-                default=["YouTube Style", "High Contrast"],
-                key="thumb_styles"
-            )
-            
-            st.markdown("---")
-            st.success("🎯 Using Gemini 3 Pro - မြန်မာဘာသာ caption ထည့်ရေးပေးနိုင်တယ်။")
-            
-            generate_clicked = st.button("🚀 Generate Thumbnail", use_container_width=True)
-    
-    with col_thumb_right:
-        with st.container(border=True):
-            st.subheader("🖼️ Generated Images")
-            
-            if generate_clicked:
+            # Generate button
+            if st.button("✨ Generate Thumbnails", use_container_width=True, type="primary"):
                 if not api_key:
-                    st.error("⚠️ Please enter API Key first!")
-                elif not user_prompt.strip():
-                    st.warning("⚠️ Please enter a prompt!")
+                    st.error("❌ API Key ထည့်ပါ!")
+                elif not prompt.strip():
+                    st.warning("⚠️ Prompt ထည့်ပါ!")
                 else:
                     st.session_state['generated_images'] = []
                     
-                    final_prompt = user_prompt.strip()
+                    # Build final prompt
+                    size_value = sizes[size]
+                    text_style_prompt = text_styles[text_style] if add_text else ""
+                    final_prompt = prompt.strip()
                     if add_text:
-                        final_prompt += f", with bold text overlay showing '{add_text}'"
-                    if style_options:
-                        final_prompt += f", style: {', '.join(style_options)}"
-                    final_prompt += ", high quality, detailed, sharp focus"
+                        final_prompt += f", text:'{add_text}', {text_style_prompt}"
+                    final_prompt += f", {size_value}, high quality"
                     
-                    st.info("🎨 Using Gemini 3 Pro...")
-                    st.markdown(f"**Prompt:** {final_prompt[:200]}...")
-                    
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    generated_images = []
-                    
-                    try:
-                        image_model = genai.GenerativeModel("models/gemini-3-pro-image-preview")
-                        
-                        for i in range(num_images):
+                    # Load reference images
+                    ref_pil_images = []
+                    if ref_images:
+                        for r in ref_images[:10]:
                             try:
-                                status_text.info(f"🔄 Generating image {i+1}/{num_images}...")
-                                progress_bar.progress((i) / num_images)
-                                
-                                generation_prompt = f"Generate an image: {final_prompt}"
-                                
-                                if ref_image:
-                                    ref_image.seek(0)
-                                    ref_img = Image.open(ref_image)
-                                    response = image_model.generate_content(
-                                        [generation_prompt, ref_img],
-                                        request_options={"timeout": 180}
-                                    )
-                                else:
-                                    response = image_model.generate_content(
-                                        generation_prompt,
-                                        request_options={"timeout": 180}
-                                    )
-                                
-                                image_found = False
-                                if response.candidates:
-                                    for part in response.candidates[0].content.parts:
-                                        if hasattr(part, 'inline_data') and part.inline_data:
-                                            generated_images.append({
-                                                'data': part.inline_data.data,
-                                                'mime_type': part.inline_data.mime_type,
-                                                'index': i + 1
-                                            })
-                                            image_found = True
-                                            status_text.success(f"✅ Image {i+1} generated!")
-                                            break
-                                
-                                if not image_found:
-                                    status_text.warning(f"⚠️ Image {i+1}: No image generated.")
-                                
-                                if i < num_images - 1:
-                                    time.sleep(2)
-                                    
+                                r.seek(0)
+                                img_bytes = r.read()
+                                ref_pil_images.append(Image.open(io.BytesIO(img_bytes)))
                             except Exception as e:
-                                status_text.error(f"⚠️ Image {i+1} failed: {str(e)[:150]}")
-                                continue
+                                st.warning(f"⚠️ Reference image load failed: {e}")
+                    
+                    # Generate function
+                    def generate_single(idx, prompt, ref_imgs):
+                        try:
+                            mdl = genai.GenerativeModel("models/gemini-3-pro-image-preview")
+                            content_parts = [f"Generate image: {prompt}"]
+                            if ref_imgs:
+                                content_parts.extend(ref_imgs)
+                            
+                            response = mdl.generate_content(content_parts, request_options={"timeout": 300})
+                            
+                            if response.candidates:
+                                for p in response.candidates[0].content.parts:
+                                    if hasattr(p, 'inline_data') and p.inline_data:
+                                        img_data = p.inline_data.data
+                                        mime = p.inline_data.mime_type
+                                        
+                                        if img_data and len(img_data) > 1000:
+                                            return {'data': img_data, 'mime': mime, 'idx': idx, 'success': True}
+                            
+                            return {'error': 'No image generated', 'idx': idx, 'success': False}
+                        except Exception as e:
+                            return {'error': str(e), 'idx': idx, 'success': False}
+                    
+                    # Progress
+                    progress_bar = st.progress(0)
+                    status = st.empty()
+                    
+                    generated_count = 0
+                    
+                    for i in range(1, num_images + 1):
+                        status.info(f"🎨 Generating image {i}/{num_images}...")
                         
-                        progress_bar.progress(1.0)
-                        st.session_state['generated_images'] = generated_images
+                        result = generate_single(i, final_prompt, ref_pil_images)
                         
-                        if generated_images:
-                            status_text.success(f"🎉 Done! Generated {len(generated_images)}/{num_images} image(s)")
+                        if result and result.get('success'):
+                            st.session_state['generated_images'].append(result)
+                            generated_count += 1
+                            status.success(f"✅ Image {i} generated!")
                         else:
-                            status_text.error("❌ No images were generated.")
+                            error_msg = result.get('error', 'Unknown error') if result else 'No response'
+                            status.warning(f"⚠️ Image {i} failed: {error_msg}")
+                        
+                        progress_bar.progress(i / num_images)
+                        
+                        if i < num_images:
+                            time.sleep(1)
                     
-                    except Exception as e:
-                        st.error(f"❌ Generation Error: {e}")
+                    if generated_count > 0:
+                        status.success(f"✅ Generated {generated_count}/{num_images} images!")
+                    else:
+                        status.error("❌ All images failed to generate")
             
-            if st.session_state['generated_images']:
+            # Display results
+            if st.session_state.get('generated_images'):
                 st.markdown("---")
-                for idx, img_data in enumerate(st.session_state['generated_images']):
-                    st.markdown(f"**Image {img_data['index']}:**")
-                    st.image(img_data['data'], use_container_width=True)
-                    
-                    file_ext = "png" if "png" in img_data.get('mime_type', 'png') else "jpg"
-                    st.download_button(
-                        f"📥 Download Image {img_data['index']}",
-                        img_data['data'],
-                        file_name=f"thumbnail_{idx+1}.{file_ext}",
-                        mime=img_data.get('mime_type', 'image/png'),
-                        key=f"dl_thumb_{idx}_{time.time()}"
-                    )
-                    st.markdown("---")
+                st.subheader("🖼️ Generated Thumbnails")
                 
-                if st.button("🗑️ Clear All Images", use_container_width=True, key="clear_thumb"):
+                if st.button("🗑️ Clear All", key="clear_thumbs"):
                     st.session_state['generated_images'] = []
                     st.rerun()
-            
-            elif not generate_clicked:
-                st.info("💡 Enter a prompt and click 'Generate Thumbnail' to create images.")
-
-# ==========================================
-# TAB 4: SCRIPT REWRITER
-# ==========================================
-with tab4:
-    st.write("")
-    col_re_1, col_re_2 = st.columns([1, 1], gap="medium")
+                
+                for i, img in enumerate(st.session_state['generated_images']):
+                    with st.container(border=True):
+                        try:
+                            st.image(img['data'], use_container_width=True)
+                            st.download_button(
+                                f"📥 Download #{img['idx']}",
+                                img['data'],
+                                f"thumbnail_{img['idx']}.png",
+                                mime=img.get('mime', 'image/png'),
+                                key=f"dl_thumb_{i}_{int(time.time()*1000)}",
+                                use_container_width=True
+                            )
+                        except Exception as e:
+                            st.error(f"Error displaying image: {e}")
     
-    with col_re_1:
-        with st.container(border=True):
-            st.subheader("✍️ Style & Source")
-            
-            rewrite_style_file = st.file_uploader("1. Upload Writing Style", type=["txt", "pdf", "docx"], key="rewrite_style_uploader")
-            original_script = st.text_area("2. Paste Original Script Here", height=300, placeholder="Paste the script you want to rewrite...")
-            
-            if st.button("✨ Rewrite Script", use_container_width=True):
-                if not api_key:
-                    st.error("⚠️ API Key Missing!")
-                elif not original_script:
-                    st.warning("⚠️ Please paste the original script.")
-                else:
-                    st.session_state['run_rewrite'] = True
-
-    with col_re_2:
-        if st.session_state.get('run_rewrite'):
-            with st.container(border=True):
-                st.subheader("📝 Rewritten Output")
-                
-                try:
-                    style_content_rewrite = "Standard Professional Tone"
-                    
-                    if rewrite_style_file:
-                        with st.spinner("📖 Reading Style File..."):
-                            extracted_text = read_file_content(rewrite_style_file)
-                            if extracted_text:
-                                style_content_rewrite = extracted_text
-                                st.success(f"✅ Loaded style from {rewrite_style_file.name}")
-
-                    with st.spinner("🤖 Rewriting..."):
-                        rewrite_model = genai.GenerativeModel(writer_model_name)
-                        
-                        rewrite_prompt = f"""
-                        You are an expert Script Editor.
-                        
-                        **TASK:** Rewrite the ORIGINAL SCRIPT using the TARGET WRITING STYLE.
-                        
-                        **RULES:**
-                        1. NO SUMMARIZATION - keep all details
-                        2. 100% CONTENT PRESERVATION
-                        3. MATCH STYLE strictly
-                        4. OUTPUT: Burmese (Myanmar)
-                        
-                        **TARGET STYLE:**
-                        {style_content_rewrite[:5000]} 
-                        
-                        **ORIGINAL SCRIPT:**
-                        {original_script}
-                        """
-                        
-                        rewrite_response, error = call_gemini_api(rewrite_model, rewrite_prompt)
-                        
-                        if rewrite_response and not error:
-                            text, _ = get_response_text_safe(rewrite_response)
-                            if text:
-                                st.success("✅ Rewrite Complete!")
-                                st.text_area("Result", text, height=500)
-                                st.download_button("📥 Download", text, file_name="rewritten_script.txt")
-                            else:
-                                st.error("❌ Failed to extract rewritten text.")
-                        else:
-                            st.error(f"❌ Rewrite failed: {error}")
-                        
-                except Exception as e:
-                    st.error(f"Error: {e}")
-                
-                st.session_state['run_rewrite'] = False
-        else:
-            with st.container(border=True):
-                st.info("💡 Paste a script and upload a style to rewrite.")
-
-
-# --- FOOTER ---
-st.markdown("""
-<div style='text-align: center; margin-top: 3rem; padding: 1.5rem 0; border-top: 1px solid rgba(0, 255, 100, 0.1);'>
-    <p style='color: rgba(0, 255, 100, 0.4) !important; font-size: 0.85rem; margin: 0; font-family: "Share Tech Mono", monospace; letter-spacing: 1px;'>
-        ✨ POWERED BY Recap Studio Ultra
-    </p>
-</div>
-""", unsafe_allow_html=True)
+    # Footer
+    st.markdown("---")
+    st.markdown("""
+    <div style="text-align: center; padding: 1rem 0;">
+        <p style="color: #64748b; font-size: 0.85rem;">
+            🎬 AI Studio Pro v7.0 | Made with ❤️ for Content Creators
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
